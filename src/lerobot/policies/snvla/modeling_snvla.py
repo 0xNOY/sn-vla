@@ -24,7 +24,12 @@ from lerobot.utils.constants import (
 )
 
 from .configuration_snvla import SNVLAConfig
-from .processor_snvla import TASK_KEY, TOKEN_AR_MASK_KEY, TOKEN_LOSS_MASK_KEY, make_prefix_prompt
+from .processor_snvla import (
+    OBS_LANGUAGE_TOKEN_AR_MASK,
+    OBS_LANGUAGE_TOKEN_LOSS_MASK,
+    TASK_KEY,
+    make_prefix_prompt,
+)
 
 
 class SNVLACore(nn.Module):
@@ -406,8 +411,8 @@ class SNVLAPolicy(PI05Policy):
 
         language_tokens = batch[OBS_LANGUAGE_TOKENS]
         language_attention_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
-        language_ar_masks = batch[TOKEN_AR_MASK_KEY]
-        language_loss_masks = batch[TOKEN_LOSS_MASK_KEY]
+        language_ar_masks = batch[OBS_LANGUAGE_TOKEN_AR_MASK]
+        language_loss_masks = batch[OBS_LANGUAGE_TOKEN_LOSS_MASK]
 
         actions = self.prepare_action(batch)
 

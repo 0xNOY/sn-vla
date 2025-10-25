@@ -21,21 +21,21 @@ from lerobot.processor import (
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.processor.core import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
+    CURRENT_NARRATION,
     OBS_LANGUAGE_ATTENTION_MASK,
+    OBS_LANGUAGE_TOKEN_AR_MASK,
+    OBS_LANGUAGE_TOKEN_LOSS_MASK,
     OBS_LANGUAGE_TOKENS,
     OBS_STATE,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
+    PREVIOUS_NARRATIONS,
 )
 
 from .configuration_snvla import SNVLAConfig
 
 # 学習データセットが提供するキー
 TASK_KEY = "task"
-CURRENT_NARRATION_KEY = "current_narration"  # t時点のナレーション
-PREVIOUS_NARRATIONS_KEY = "previous_narrations"  # t時点までのナレーション履歴
-TOKEN_AR_MASK_KEY = "obs_language_ar_mask"
-TOKEN_LOSS_MASK_KEY = "obs_language_loss_mask"
 
 
 def make_prefix_prompt(task: str, previous_narrations: list[str], state_str: str) -> str:
@@ -89,15 +89,13 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
         if tasks is None:
             raise ValueError(f"'{self.task_key}' not found in complementary data.")
 
-        current_narration = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(CURRENT_NARRATION_KEY)
+        current_narration = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(CURRENT_NARRATION)
         if current_narration is None:
-            raise ValueError(f"'{CURRENT_NARRATION_KEY}' (ground-truth) not found.")
+            raise ValueError(f"'{CURRENT_NARRATION}' (ground-truth) not found.")
 
-        previous_narrations = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(
-            PREVIOUS_NARRATIONS_KEY
-        )
+        previous_narrations = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(PREVIOUS_NARRATIONS)
         if previous_narrations is None:
-            raise ValueError(f"'{PREVIOUS_NARRATIONS_KEY}' (ground-truth) not found.")
+            raise ValueError(f"'{PREVIOUS_NARRATIONS}' (ground-truth) not found.")
 
         state_str = self._discretize_state(state)
 
@@ -158,8 +156,8 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
         obs = transition.get(TransitionKey.OBSERVATION, {})
         obs[OBS_LANGUAGE_TOKENS] = torch.tensor(input_ids, dtype=torch.long)
         obs[OBS_LANGUAGE_ATTENTION_MASK] = torch.tensor(attention_mask, dtype=torch.bool)
-        obs[TOKEN_AR_MASK_KEY] = torch.tensor(token_ar_mask, dtype=torch.bool)
-        obs[TOKEN_LOSS_MASK_KEY] = torch.tensor(token_loss_mask, dtype=torch.bool)
+        obs[OBS_LANGUAGE_TOKEN_AR_MASK] = torch.tensor(token_ar_mask, dtype=torch.bool)
+        obs[OBS_LANGUAGE_TOKEN_LOSS_MASK] = torch.tensor(token_loss_mask, dtype=torch.bool)
 
         transition[TransitionKey.OBSERVATION] = obs
         return transition
@@ -172,8 +170,12 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
         """
         # (OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK はTokenizerProcessorStepと互換)
         max_len = self.config.tokenizer_max_length
-        features["observation"][TOKEN_AR_MASK_KEY] = PolicyFeature(type=FeatureType.STATE, shape=(max_len,))
-        features["observation"][TOKEN_LOSS_MASK_KEY] = PolicyFeature(type=FeatureType.STATE, shape=(max_len,))
+        features["observation"][OBS_LANGUAGE_TOKEN_AR_MASK] = PolicyFeature(
+            type=FeatureType.STATE, shape=(max_len,)
+        )
+        features["observation"][OBS_LANGUAGE_TOKEN_LOSS_MASK] = PolicyFeature(
+            type=FeatureType.STATE, shape=(max_len,)
+        )
         return features
 
 

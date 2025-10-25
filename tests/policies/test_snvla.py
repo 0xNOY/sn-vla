@@ -7,11 +7,11 @@ import torch
 from lerobot.policies.snvla.configuration_snvla import SNVLAConfig
 from lerobot.policies.snvla.modeling_snvla import SNVLAPolicy
 from lerobot.policies.snvla.processor_snvla import (
-    CURRENT_NARRATION_KEY,
-    PREVIOUS_NARRATIONS_KEY,
+    CURRENT_NARRATION,
+    OBS_LANGUAGE_TOKEN_AR_MASK,
+    OBS_LANGUAGE_TOKEN_LOSS_MASK,
+    PREVIOUS_NARRATIONS,
     TASK_KEY,
-    TOKEN_AR_MASK_KEY,
-    TOKEN_LOSS_MASK_KEY,
     SNVLAPrepareTrainingTokenizerProcessorStep,
 )
 
@@ -21,7 +21,7 @@ from lerobot.processor.core import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     ACTION,
     COMPLEMENTARY_DATA,
-    OBS_IMAGE_VIEWS,
+    OBS_IMAGES,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
     OBS_STATE,
@@ -55,8 +55,8 @@ def dummy_transition(test_config: SNVLAConfig) -> EnvTransition:
     transition[TransitionKey.ACTION] = torch.rand(test_config.max_action_dim)
     transition[TransitionKey.COMPLEMENTARY_DATA] = {
         TASK_KEY: "pick up the red block",
-        CURRENT_NARRATION_KEY: "approaching the block",
-        PREVIOUS_NARRATIONS_KEY: ["first, I see a block", "now I will move my arm"],
+        CURRENT_NARRATION: "approaching the block",
+        PREVIOUS_NARRATIONS: ["first, I see a block", "now I will move my arm"],
     }
     return transition
 
@@ -67,7 +67,7 @@ def dummy_inference_batch(test_config: SNVLAConfig) -> dict:
     batch_size = 1
     return {
         # ダミー画像 (C, H, W)
-        OBS_IMAGE_VIEWS: [torch.rand(3, 224, 224).unsqueeze(0)],
+        OBS_IMAGES: [torch.rand(3, 224, 224).unsqueeze(0)],
         OBS_STATE: torch.rand(batch_size, test_config.max_state_dim),
         COMPLEMENTARY_DATA: {TASK_KEY: ["pick up the red block"]},
     }
@@ -82,6 +82,9 @@ def test_processor_step(test_config: SNVLAConfig, dummy_transition: EnvTransitio
     SNVLAPrepareTrainingTokenizerProcessorStepが、入力Transitionを正しく
     トークン化し、必要なマスクを生成できるかを確認します。
     """
+    # transitionの内容を確認
+    print(dummy_transition)
+
     # 1. テスト対象のプロセッサを初期化
     processor = SNVLAPrepareTrainingTokenizerProcessorStep(config=test_config)
 
@@ -94,23 +97,26 @@ def test_processor_step(test_config: SNVLAConfig, dummy_transition: EnvTransitio
     expected_keys = [
         OBS_LANGUAGE_TOKENS,
         OBS_LANGUAGE_ATTENTION_MASK,
-        TOKEN_AR_MASK_KEY,
-        TOKEN_LOSS_MASK_KEY,
+        OBS_LANGUAGE_TOKEN_AR_MASK,
+        OBS_LANGUAGE_TOKEN_LOSS_MASK,
     ]
     for key in expected_keys:
         assert key in processed_obs, f"キー '{key}' がプロセッサの出力にありません"
+
+    # 出力の内容を確認
+    print(processed_obs)
 
     # 3.2. 出力の形状が正しいことを確認
     max_len = test_config.tokenizer_max_length
     assert processed_obs[OBS_LANGUAGE_TOKENS].shape == (max_len,), "トークンの形状が不正です"
     assert processed_obs[OBS_LANGUAGE_ATTENTION_MASK].shape == (max_len,), "Attentionマスクの形状が不正です"
-    assert processed_obs[TOKEN_AR_MASK_KEY].shape == (max_len,), "ARマスクの形状が不正です"
-    assert processed_obs[TOKEN_LOSS_MASK_KEY].shape == (max_len,), "Lossマスクの形状が不正です"
+    assert processed_obs[OBS_LANGUAGE_TOKEN_AR_MASK].shape == (max_len,), "ARマスクの形状が不正です"
+    assert processed_obs[OBS_LANGUAGE_TOKEN_LOSS_MASK].shape == (max_len,), "Lossマスクの形状が不正です"
 
     # 3.3. Lossマスクのロジックが正しいことを確認（プレフィックス部分が0、サフィックス部分が1）
     # このテストケースでは、"Next: <bon>approaching the block<eos>" がサフィックス
     # トークナイザによって正確な位置は変動するが、大まかに後半が1になっているはず
-    loss_mask = processed_obs[TOKEN_LOSS_MASK_KEY].int()
+    loss_mask = processed_obs[OBS_LANGUAGE_TOKEN_LOSS_MASK].int()
     assert torch.sum(loss_mask) > 0, "Lossマスクがすべて0です"
     assert torch.sum(loss_mask) < max_len, "Lossマスクがすべて1です"
     print("\nProcessor Test Passed!")
@@ -130,11 +136,11 @@ def test_forward_pass(test_config: SNVLAConfig):
     batch_size = 2
     max_len = test_config.tokenizer_max_length
     batch = {
-        OBS_IMAGE_VIEWS: [torch.rand(batch_size, 3, 224, 224)],
+        OBS_IMAGES: [torch.rand(batch_size, 3, 224, 224)],
         OBS_LANGUAGE_TOKENS: torch.randint(0, 1000, (batch_size, max_len)),
         OBS_LANGUAGE_ATTENTION_MASK: torch.ones(batch_size, max_len, dtype=torch.bool),
-        TOKEN_AR_MASK_KEY: torch.zeros(batch_size, max_len, dtype=torch.bool),
-        TOKEN_LOSS_MASK_KEY: torch.ones(batch_size, max_len, dtype=torch.bool),
+        OBS_LANGUAGE_TOKEN_AR_MASK: torch.zeros(batch_size, max_len, dtype=torch.bool),
+        OBS_LANGUAGE_TOKEN_LOSS_MASK: torch.ones(batch_size, max_len, dtype=torch.bool),
         ACTION: torch.rand(batch_size, test_config.chunk_size, test_config.max_action_dim),
     }
 
@@ -195,7 +201,7 @@ def test_select_action(test_config: SNVLAConfig, dummy_inference_batch: dict):
     policy._act.assert_called_once()
 
     # 5. 2回目の行動選択を実行
-    action2 = policy.select_action(dummy_inference_batch)
+    _ = policy.select_action(dummy_inference_batch)
 
     # 6. アクションキューが機能していることを検証
     # 6.1. キューから取得されるため、_actは再度呼ばれない

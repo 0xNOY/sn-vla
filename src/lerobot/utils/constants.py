@@ -70,3 +70,10 @@ LOOKAHEAD_BACKTRACKTABLE = 100
 
 # openpi
 OPENPI_ATTENTION_MASK_VALUE = -2.3819763e38  # TODO(pepijn): Modify this when extending support to fp8 models
+
+# snvla
+COMPLEMENTARY_DATA = "complementary_data"
+CURRENT_NARRATION = "current_narration"  # t時点のナレーション
+PREVIOUS_NARRATIONS = "previous_narrations"  # t時点までのナレーション履歴
+OBS_LANGUAGE_TOKEN_AR_MASK = OBS_LANGUAGE + ".ar_mask"  # 自己回帰(1)か相互参照(0)か
+OBS_LANGUAGE_TOKEN_LOSS_MASK = OBS_LANGUAGE + ".loss_mask"  # 損失計算に使うかどうか
