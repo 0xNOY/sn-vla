@@ -4,6 +4,7 @@ import pytest
 import torch
 
 # テスト対象のモジュールをインポート
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.snvla.configuration_snvla import SNVLAConfig
 from lerobot.policies.snvla.modeling_snvla import SNVLAPolicy
 from lerobot.policies.snvla.processor_snvla import (
@@ -31,19 +32,23 @@ from lerobot.utils.constants import (
 
 
 @pytest.fixture
-def test_config() -> SNVLAConfig:
-    """テスト用の小さなSNVLAConfigインスタンスを作成します。"""
-    config = SNVLAConfig()
-    # テストが高速に終わるように設定を調整
-    config.tokenizer_max_length = 64
-    config.max_state_dim = 8
-    config.max_action_dim = 4
-    config.n_action_steps = 2
-    config.chunk_size = 2
-    config.compile_model = False  # テスト中はコンパイルしない
-    config.device = "cpu"
-    # output_featuresのダミー設定
-    config.output_features = {ACTION: MagicMock(shape=(4,))}
+def test_config():
+    config = SNVLAConfig(
+        n_obs_steps=1,
+        input_features={
+            "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(7,)),
+            "observation.images": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
+        },
+        # テストが高速に終わるように設定を調整
+        max_state_dim=8,
+        max_action_dim=4,
+        n_action_steps=2,
+        chunk_size=2,
+        compile_model=False,  # テスト中はコンパイルしない
+        device="cpu",
+        # output_featuresのダミー設定
+        output_features={ACTION: MagicMock(shape=(4,))},
+    )
     return config
 
 
@@ -67,7 +72,7 @@ def dummy_inference_batch(test_config: SNVLAConfig) -> dict:
     batch_size = 1
     return {
         # ダミー画像 (C, H, W)
-        OBS_IMAGES: [torch.rand(3, 224, 224).unsqueeze(0)],
+        OBS_IMAGES: torch.rand(batch_size, 3, 224, 224),
         OBS_STATE: torch.rand(batch_size, test_config.max_state_dim),
         COMPLEMENTARY_DATA: {TASK_KEY: ["pick up the red block"]},
     }
@@ -136,7 +141,7 @@ def test_forward_pass(test_config: SNVLAConfig):
     batch_size = 2
     max_len = test_config.tokenizer_max_length
     batch = {
-        OBS_IMAGES: [torch.rand(batch_size, 3, 224, 224)],
+        OBS_IMAGES: torch.rand(batch_size, 3, 224, 224),
         OBS_LANGUAGE_TOKENS: torch.randint(0, 1000, (batch_size, max_len)),
         OBS_LANGUAGE_ATTENTION_MASK: torch.ones(batch_size, max_len, dtype=torch.bool),
         OBS_LANGUAGE_TOKEN_AR_MASK: torch.zeros(batch_size, max_len, dtype=torch.bool),
@@ -191,7 +196,7 @@ def test_select_action(test_config: SNVLAConfig, dummy_inference_batch: dict):
     # 4.1. 最初の行動が正しく生成されたか
     assert isinstance(action, torch.Tensor), "行動がTensorではありません"
     original_action_dim = test_config.output_features[ACTION].shape[0]
-    assert action.shape == (original_action_dim,), f"行動の形状が不正です: {action.shape}"
+    assert action.shape == (1, original_action_dim), f"行動の形状が不正です: {action.shape}"
 
     # 4.2. アクションキューが満たされたか
     # n_action_steps(2) - 1(popleft) = 1

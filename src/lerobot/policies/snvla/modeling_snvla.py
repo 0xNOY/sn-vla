@@ -68,6 +68,10 @@ class SNVLACore(nn.Module):
 
         self.gradient_checkpointing_enabled = False
 
+    @property
+    def device(self) -> torch.device:
+        return next(self.parameters()).device
+
     def forward(
         self,
         images,
@@ -79,8 +83,19 @@ class SNVLACore(nn.Module):
         language_loss_masks,
         diffusion_loss_masks,
     ) -> tuple[Tensor, dict[str, Tensor]]:
-        noise = self.sample_noise(actions.shape, actions.device)
-        time = self.sample_time(actions.shape[0], actions.device)
+        device = self.device
+
+        language_tokens = language_tokens.to(device)
+        language_padding_masks = language_padding_masks.to(device)
+        language_attention_masks = language_attention_masks.to(device)
+        language_loss_masks = language_loss_masks.to(device)
+        diffusion_loss_masks = diffusion_loss_masks.to(device)
+
+        if actions.device != device:
+            actions = actions.to(device)
+
+        noise = self.sample_noise(actions.shape, device)
+        time = self.sample_time(actions.shape[0], device)
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
@@ -89,6 +104,7 @@ class SNVLACore(nn.Module):
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, language_tokens, language_padding_masks
         )
+        prefix_att_masks = prefix_att_masks.clone()
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)
 
         # Attention Masks
@@ -122,10 +138,15 @@ class SNVLACore(nn.Module):
 
         # Text Loss (L_narration)
         txt_logits = self.paligemma_with_expert.paligemma.lm_head(prefix_out)
+        language_seq_len = language_tokens.shape[1]
+        txt_logits = txt_logits[:, -language_seq_len:, :]
 
         # ターゲットとロジットをシフト
         txt_targets = language_tokens[:, 1:]
         txt_logits = txt_logits[:, :-1]
+
+        if txt_logits.dtype != torch.float32:
+            txt_logits = txt_logits.to(torch.float32)
 
         txt_loss_raw = F.cross_entropy(
             txt_logits.transpose(1, 2),  # (B, L, V) -> (B, V, L)
@@ -213,7 +234,7 @@ class SNVLAPolicy(PI05Policy):
         }
 
     @torch.no_grad()
-    def _prefill(self, images, img_masks, tokens, masks) -> tuple[Tensor, Any]:
+    def _prefill(self, images, img_masks, tokens, masks) -> tuple[Tensor, Any, Tensor]:
         """Runs the prefix (images + text history) to get KV cache and next-token logits."""
         # Embed prefix
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.model.embed_prefix(
@@ -243,7 +264,7 @@ class SNVLAPolicy(PI05Policy):
             1
         )  # (B, 1, V)
 
-        return eop_logits, kv_cache
+        return eop_logits, kv_cache, prefix_pad_masks.clone()
 
     def _decide_mode(self, logits: Tensor) -> Tensor:
         """Decide the next mode (action or narration) from output logits."""
@@ -311,7 +332,13 @@ class SNVLAPolicy(PI05Policy):
         )
 
         # プレフィックスマスクにboaトークン分(1)を追加
-        act_prefix_pad_masks = F.pad(prefix_pad_masks, (0, 1), value=True)
+        boa_pad = torch.ones(
+            prefix_pad_masks.shape[0],
+            1,
+            dtype=prefix_pad_masks.dtype,
+            device=prefix_pad_masks.device,
+        )
+        act_prefix_pad_masks = torch.cat([prefix_pad_masks, boa_pad], dim=1)
 
         # 拡散モデルのサンプリング
         num_steps = self.config.num_inference_steps
@@ -362,14 +389,15 @@ class SNVLAPolicy(PI05Policy):
         masks = token_data["attention_mask"]
 
         if self._kv_cache is None:
-            logits, self._kv_cache = self._prefill(images, img_masks, tokens, masks)
+            logits, self._kv_cache, prefix_pad_masks = self._prefill(images, img_masks, tokens, masks)
         else:
             logging.warning("Reusing KV cache without reset it. This should not happen in normal flow.")
-            logits, self._kv_cache = self._prefill(images, img_masks, tokens, masks)
+            logits, self._kv_cache, prefix_pad_masks = self._prefill(images, img_masks, tokens, masks)
 
         # モード決定
         mode = self._decide_mode(logits)
         current_token = mode
+        prefix_pad_masks = prefix_pad_masks.clone()
 
         # 実況ループ
         while mode.item() == self.config.begin_of_narration_token_id:
@@ -379,6 +407,13 @@ class SNVLAPolicy(PI05Policy):
             for _step in range(self.config.max_narration_length):
                 # KVキャッシュを更新しながら1ステップデコード
                 new_token, logits, self._kv_cache = self._narrate_step(current_token, self._kv_cache)
+                narration_pad = torch.ones(
+                    prefix_pad_masks.shape[0],
+                    1,
+                    dtype=prefix_pad_masks.dtype,
+                    device=prefix_pad_masks.device,
+                )
+                prefix_pad_masks = torch.cat([prefix_pad_masks, narration_pad], dim=1)
                 current_token = new_token
 
                 if new_token.item() == self.config.eos_token_id:
@@ -396,8 +431,7 @@ class SNVLAPolicy(PI05Policy):
 
         # 行動生成
         bsize = images[0].shape[0]
-        prefix_pad_masks = masks
-        self._act(self.config, self._kv_cache, prefix_pad_masks, bsize)
+        self._act(self._kv_cache, prefix_pad_masks, bsize)
 
         # KVキャッシュリセット
         self._kv_cache = None
