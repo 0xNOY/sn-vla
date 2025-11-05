@@ -39,9 +39,8 @@ def _is_scalar(x):
 
 def log_rerun_narrations(
     current_narration: str,
-    previous_narrations: list[str],
+    previous_narrations_str: str,
     next_narration: str,
-    remaining_count: int,
 ) -> None:
     """
     Logs narration state to Rerun for real-time visualization.
@@ -57,8 +56,8 @@ def log_rerun_narrations(
         remaining_count: Number of narrations remaining in the queue.
     """
     # Log previous narrations (history)
-    for i, narration in enumerate(previous_narrations):
-        rr.log(f"narration/previous_{i}", rr.TextLog(narration, level="INFO"))
+    if previous_narrations_str:
+        rr.log("narration/previous", rr.TextLog(previous_narrations_str, level="INFO"))
 
     # Log current narration
     if current_narration:
@@ -66,10 +65,7 @@ def log_rerun_narrations(
 
     # Log next narration preview
     if next_narration:
-        rr.log("narration/next", rr.TextLog(next_narration, level="DEBUG"))
-
-    # Log remaining count
-    rr.log("narration/remaining_count", rr.Scalars(float(remaining_count)))
+        rr.log("narration/next", rr.TextLog(next_narration, level="INFO"))
 
 
 def log_rerun_data(

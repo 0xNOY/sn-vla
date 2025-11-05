@@ -119,7 +119,6 @@ from lerobot.utils.control_utils import (
     sanity_check_dataset_robot_compatibility,
 )
 from lerobot.utils.import_utils import register_third_party_devices
-from lerobot.utils.narration_manager import NarrationManager
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import (
     get_safe_torch_device,
@@ -206,6 +205,41 @@ class RecordConfig:
     def __get_path_fields__(cls) -> list[str]:
         """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
         return ["policy"]
+
+
+class NarrationManager:
+    def __init__(self, narrations: list[str]):
+        self._next_narration_index = 0
+        self._narrations = narrations
+        self._previous_narrations: list[str] = []
+
+    def pop(self) -> tuple[str, str]:
+        if self._next_narration_index >= len(self._narrations):
+            raise IndexError("No more narrations to pop.")
+
+        narration = self._narrations[self._next_narration_index]
+        previous_narrations_str = "\n".join(self._previous_narrations)
+        self._previous_narrations.append(narration)
+        self._next_narration_index += 1
+        return narration, previous_narrations_str
+
+    def get_next_narration(self) -> str | None:
+        if self._next_narration_index >= len(self._narrations):
+            return None
+        return self._narrations[self._next_narration_index]
+
+    def reset(self):
+        self._next_narration_index = 0
+        self._previous_narrations = []
+
+    def has_narrations(self) -> bool:
+        return self._next_narration_index < len(self._narrations)
+
+    def is_enabled(self) -> bool:
+        return len(self._narrations) > 0
+
+    def should_end_episode(self) -> bool:
+        return not self.has_narrations()
 
 
 """ --------------- record_loop() data flow --------------------------
@@ -364,15 +398,21 @@ def record_loop(
         # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
         _sent_action = robot.send_action(robot_action_to_send)
 
+        narration_occurred = events.get("narration_occurred", False)
+        if narration_occurred:
+            current_narration, previous_narrations_str = narration_manager.pop()
+            next_narration = narration_manager.get_next_narration()
+            logging.info(f"Inserted narration: {current_narration}")
+
         # Write to dataset
         if dataset is not None:
             action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
             frame = {**observation_frame, **action_frame, "task": single_task}
 
             # Add narration data if narration manager is enabled
-            if narration_manager is not None and narration_manager.is_enabled():
-                frame["current_narration"] = narration_manager.get_current_narration()
-                frame["previous_narrations"] = narration_manager.get_previous_narrations_as_string()
+            if narration_occurred:
+                frame["previous_narrations"] = previous_narrations_str
+                frame["current_narration"] = current_narration
 
             dataset.add_frame(frame)
 
@@ -380,18 +420,14 @@ def record_loop(
             log_rerun_data(observation=obs_processed, action=action_values)
 
             # Display narration state only when state has changed (initial frame or after 'n' key press)
-            if (
-                narration_manager is not None
-                and narration_manager.is_enabled()
-                and narration_manager.has_state_changed()
+            if narration_occurred or (
+                narration_manager is not None and narration_manager.is_enabled() and timestamp == 0
             ):
                 log_rerun_narrations(
-                    current_narration=narration_manager.get_current_narration(),
-                    previous_narrations=narration_manager.get_previous_narrations(),
-                    next_narration=narration_manager.get_next_narration_preview(),
-                    remaining_count=narration_manager.get_remaining_count(),
+                    current_narration=current_narration,
+                    previous_narrations_str=previous_narrations_str,
+                    next_narration=next_narration,
                 )
-                narration_manager.clear_state_changed_flag()
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
@@ -482,20 +518,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     narration_manager = NarrationManager(narrations=cfg.dataset.narrations)
 
     # Setup custom keyboard handlers for narration
-    custom_handlers = {}
+    custom_events = {}
     if narration_manager.is_enabled():
+        custom_events["n"] = "narration_occurred"
 
-        def handle_narration_key(events_dict):
-            """Handler for 'n' key to advance narration."""
-            if narration_manager.has_narrations():
-                new_narration = narration_manager.pop_narration()
-                print(f"Narration advanced: {new_narration}")
-            else:
-                print("No more narrations available.")
-
-        custom_handlers["n"] = handle_narration_key
-
-    listener, events = init_keyboard_listener(custom_handlers=custom_handlers)
+    listener, events = init_keyboard_listener(custom_events=custom_events)
 
     with VideoEncodingManager(dataset):
         recorded_episodes = 0

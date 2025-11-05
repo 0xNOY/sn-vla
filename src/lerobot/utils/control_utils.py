@@ -115,7 +115,7 @@ def predict_action(
     return action
 
 
-def init_keyboard_listener(custom_handlers: dict[str, callable] | None = None):
+def init_keyboard_listener(custom_events: dict[str, str] | None = None):
     """
     Initializes a non-blocking keyboard listener for real-time user interaction.
 
@@ -124,10 +124,10 @@ def init_keyboard_listener(custom_handlers: dict[str, callable] | None = None):
     handles headless environments where keyboard listening is not possible.
 
     Args:
-        custom_handlers: Optional dictionary mapping key names to handler functions.
-                        Key names can be single characters (e.g., 'n') or special key names
-                        (e.g., 'right', 'left', 'esc'). Each handler function receives the
-                        events dictionary as its only argument.
+        custom_events: Optional dictionary mapping key names to event names.
+                      Key names can be single characters (e.g., 'n') or special key names
+                      (e.g., 'right', 'left', 'esc'). Event names are strings that will be
+                      set to True in the events dictionary when the corresponding key is pressed.
 
     Returns:
         A tuple containing:
@@ -141,6 +141,11 @@ def init_keyboard_listener(custom_handlers: dict[str, callable] | None = None):
     events["exit_early"] = False
     events["rerecord_episode"] = False
     events["stop_recording"] = False
+
+    # Initialize custom events
+    if custom_events:
+        for event_name in custom_events.values():
+            events[event_name] = False
 
     if is_headless():
         logging.warning(
@@ -168,17 +173,21 @@ def init_keyboard_listener(custom_handlers: dict[str, callable] | None = None):
                 events["exit_early"] = True
 
             # Handle custom keys
-            if custom_handlers:
+            if custom_events:
                 # Check for character keys
                 if hasattr(key, "char") and key.char is not None:
                     key_name = key.char
-                    if key_name in custom_handlers:
-                        custom_handlers[key_name](events)
+                    if key_name in custom_events:
+                        event_name = custom_events[key_name]
+                        print(f"Key '{key_name}' pressed. Setting event '{event_name}'...")
+                        events[event_name] = True
                 # Check for special keys
                 elif hasattr(key, "name"):
                     key_name = key.name
-                    if key_name in custom_handlers:
-                        custom_handlers[key_name](events)
+                    if key_name in custom_events:
+                        event_name = custom_events[key_name]
+                        print(f"Key '{key_name}' pressed. Setting event '{event_name}'...")
+                        events[event_name] = True
 
         except Exception as e:
             print(f"Error handling key press: {e}")
