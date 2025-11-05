@@ -20,13 +20,13 @@ class NarrationManager:
         max_history: Maximum number of previous narrations to keep in history.
     """
 
-    def __init__(self, narrations: list[str] | None = None, max_history: int = 5):
+    def __init__(self, narrations: list[str] | None = None, max_history: int = 20):
         """
         Initialize the NarrationManager.
 
         Args:
             narrations: List of narration strings. If None, narration functionality is disabled.
-            max_history: Maximum number of previous narrations to keep in history (default: 5).
+            max_history: Maximum number of previous narrations to keep in history.
         """
         self.narrations = list(narrations) if narrations else []
         self.current_narration = ""
