@@ -55,11 +55,11 @@ def visualize_episode_with_narrations(dataset, episode_idx=0, camera_key=None):
 
     cv2.destroyAllWindows()
 
-    if __name__ == "__main__":
-        parser = argparse.ArgumentParser(description="Visualize episodes with narrations")
-        parser.add_argument("dataset_name", type=str, help="Dataset name (e.g., username/dataset_name)")
-        parser.add_argument("--episode-idx", type=int, default=0, help="Episode index to visualize")
-        args = parser.parse_args()
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Visualize episodes with narrations")
+    parser.add_argument("dataset_name", type=str, help="Dataset name (e.g., username/dataset_name)")
+    parser.add_argument("--episode-idx", type=int, default=0, help="Episode index to visualize")
+    args = parser.parse_args()
 
-        dataset = LeRobotDataset(args.dataset_name)
-        visualize_episode_with_narrations(dataset, episode_idx=args.episode_idx)
+    dataset = LeRobotDataset(args.dataset_name)
+    visualize_episode_with_narrations(dataset, episode_idx=args.episode_idx)
