@@ -40,7 +40,7 @@ TASK_KEY = "task"
 
 def make_prefix_prompt(task: str, previous_narrations: list[str], state_str: str) -> str:
     """Constructs the prefix prompt for SN-VLA."""
-    narration_history = " ".join(s.strip() for s in previous_narrations)
+    narration_history = "\n".join(s.strip() for s in previous_narrations)
     if narration_history:
         narration_history = f"History: {narration_history}\n"
 
@@ -85,8 +85,8 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
         if state is None:
             raise ValueError("State is required for SN-VLA")
 
-        tasks = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.task_key)  # TODO: tasks? task?
-        if tasks is None:
+        task = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.task_key)
+        if task is None:
             raise ValueError(f"'{self.task_key}' not found in complementary data.")
 
         current_narration = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(CURRENT_NARRATION)
@@ -98,9 +98,10 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
             raise ValueError(f"'{PREVIOUS_NARRATIONS}' (ground-truth) not found.")
 
         state_str = self._discretize_state(state)
+        previous_narrations = previous_narrations.split("\n")
 
         # プレフィックス: コンテキスト
-        prefix_str = make_prefix_prompt(tasks, previous_narrations, state_str)
+        prefix_str = make_prefix_prompt(task, previous_narrations, state_str)
 
         # サフィックス: 予測ターゲット
         current_narration = current_narration.strip()
