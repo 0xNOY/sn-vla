@@ -379,14 +379,19 @@ def record_loop(
         if display_data:
             log_rerun_data(observation=obs_processed, action=action_values)
 
-            # Display narration state if enabled
-            if narration_manager is not None and narration_manager.is_enabled():
+            # Display narration state only when state has changed (initial frame or after 'n' key press)
+            if (
+                narration_manager is not None
+                and narration_manager.is_enabled()
+                and narration_manager.has_state_changed()
+            ):
                 log_rerun_narrations(
                     current_narration=narration_manager.get_current_narration(),
                     previous_narrations=narration_manager.get_previous_narrations(),
                     next_narration=narration_manager.get_next_narration_preview(),
                     remaining_count=narration_manager.get_remaining_count(),
                 )
+                narration_manager.clear_state_changed_flag()
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)

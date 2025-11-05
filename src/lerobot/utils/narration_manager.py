@@ -33,6 +33,7 @@ class NarrationManager:
         self.previous_narrations: list[str] = []
         self.max_history = max_history
         self._enabled = narrations is not None and len(narrations) > 0
+        self._state_changed = True  # Flag to track if narration state has changed
 
     def is_enabled(self) -> bool:
         """
@@ -74,6 +75,7 @@ class NarrationManager:
 
         # Pop next narration
         self.current_narration = self.narrations.pop(0)
+        self._state_changed = True  # Mark that state has changed
         return self.current_narration
 
     def get_current_narration(self) -> str:
@@ -132,6 +134,24 @@ class NarrationManager:
         """
         self.current_narration = ""
         self.previous_narrations = []
+        self._state_changed = True  # Mark state as changed for initial frame
+
+    def has_state_changed(self) -> bool:
+        """
+        Check if the narration state has changed since last check.
+
+        Returns:
+            True if state has changed, False otherwise.
+        """
+        return self._state_changed
+
+    def clear_state_changed_flag(self) -> None:
+        """
+        Clear the state changed flag after it has been processed.
+
+        This should be called after logging narration state to Rerun.
+        """
+        self._state_changed = False
 
     def should_end_episode(self) -> bool:
         """
