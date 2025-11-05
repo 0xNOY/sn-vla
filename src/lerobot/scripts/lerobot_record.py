@@ -403,6 +403,7 @@ def record_loop(
 
         narration_occurred = events.get("narration_occurred", False)
         if narration_occurred and narration_manager is not None:
+            events["narration_occurred"] = False
             current_narration, previous_narrations_str = narration_manager.pop()
             next_narration = narration_manager.get_next_narration()
             logging.info(f"Inserted narration: {current_narration}")
