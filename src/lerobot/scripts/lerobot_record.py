@@ -402,7 +402,7 @@ def record_loop(
         _sent_action = robot.send_action(robot_action_to_send)
 
         narration_occurred = events.get("narration_occurred", False)
-        if narration_occurred:
+        if narration_occurred and narration_manager is not None:
             current_narration, previous_narrations_str = narration_manager.pop()
             next_narration = narration_manager.get_next_narration()
             logging.info(f"Inserted narration: {current_narration}")
