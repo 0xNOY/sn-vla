@@ -119,13 +119,14 @@ from lerobot.utils.control_utils import (
     sanity_check_dataset_robot_compatibility,
 )
 from lerobot.utils.import_utils import register_third_party_devices
+from lerobot.utils.narration_manager import NarrationManager
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import (
     get_safe_torch_device,
     init_logging,
     log_say,
 )
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, log_rerun_narrations
 
 
 @dataclass
@@ -166,6 +167,9 @@ class DatasetRecordConfig:
     video_encoding_batch_size: int = 1
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
+    # List of narration strings for SNVLA dataset recording. When provided, the 'n' key
+    # advances through narrations, and episodes end when all narrations are consumed.
+    narrations: list[str] | None = None
 
     def __post_init__(self):
         if self.single_task is None:
@@ -256,6 +260,7 @@ def record_loop(
     control_time_s: int | None = None,
     single_task: str | None = None,
     display_data: bool = False,
+    narration_manager: NarrationManager | None = None,
 ):
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -293,6 +298,11 @@ def record_loop(
 
         if events["exit_early"]:
             events["exit_early"] = False
+            break
+
+        # Check if episode should end due to narration completion
+        if narration_manager is not None and narration_manager.should_end_episode():
+            logging.info("All narrations consumed. Ending episode.")
             break
 
         # Get robot observation
@@ -358,10 +368,25 @@ def record_loop(
         if dataset is not None:
             action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
             frame = {**observation_frame, **action_frame, "task": single_task}
+
+            # Add narration data if narration manager is enabled
+            if narration_manager is not None and narration_manager.is_enabled():
+                frame["current_narration"] = narration_manager.get_current_narration()
+                frame["previous_narrations"] = narration_manager.get_previous_narrations_as_string()
+
             dataset.add_frame(frame)
 
         if display_data:
             log_rerun_data(observation=obs_processed, action=action_values)
+
+            # Display narration state if enabled
+            if narration_manager is not None and narration_manager.is_enabled():
+                log_rerun_narrations(
+                    current_narration=narration_manager.get_current_narration(),
+                    previous_narrations=narration_manager.get_previous_narrations(),
+                    next_narration=narration_manager.get_next_narration_preview(),
+                    remaining_count=narration_manager.get_remaining_count(),
+                )
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
@@ -395,6 +420,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             use_videos=cfg.dataset.video,
         ),
     )
+
+    # Add narration features if narrations are provided
+    if cfg.dataset.narrations is not None and len(cfg.dataset.narrations) > 0:
+        dataset_features["current_narration"] = {"dtype": "string", "shape": (1,), "names": None}
+        dataset_features["previous_narrations"] = {"dtype": "string", "shape": (1,), "names": None}
 
     if cfg.resume:
         dataset = LeRobotDataset(
@@ -443,12 +473,34 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     if teleop is not None:
         teleop.connect()
 
-    listener, events = init_keyboard_listener()
+    # Initialize narration manager
+    narration_manager = NarrationManager(narrations=cfg.dataset.narrations)
+
+    # Setup custom keyboard handlers for narration
+    custom_handlers = {}
+    if narration_manager.is_enabled():
+
+        def handle_narration_key(events_dict):
+            """Handler for 'n' key to advance narration."""
+            if narration_manager.has_narrations():
+                new_narration = narration_manager.pop_narration()
+                print(f"Narration advanced: {new_narration}")
+            else:
+                print("No more narrations available.")
+
+        custom_handlers["n"] = handle_narration_key
+
+    listener, events = init_keyboard_listener(custom_handlers=custom_handlers)
 
     with VideoEncodingManager(dataset):
         recorded_episodes = 0
         while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
             log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
+
+            # Reset narration manager for each episode
+            if narration_manager.is_enabled():
+                narration_manager.reset()
+
             record_loop(
                 robot=robot,
                 events=events,
@@ -464,6 +516,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 control_time_s=cfg.dataset.episode_time_s,
                 single_task=cfg.dataset.single_task,
                 display_data=cfg.display_data,
+                narration_manager=narration_manager,
             )
 
             # Execute a few seconds without recording to give time to manually reset the environment
@@ -483,6 +536,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     control_time_s=cfg.dataset.reset_time_s,
                     single_task=cfg.dataset.single_task,
                     display_data=cfg.display_data,
+                    narration_manager=None,  # No narration during reset
                 )
 
             if events["rerecord_episode"]:

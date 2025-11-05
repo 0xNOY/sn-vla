@@ -115,13 +115,19 @@ def predict_action(
     return action
 
 
-def init_keyboard_listener():
+def init_keyboard_listener(custom_handlers: dict[str, callable] | None = None):
     """
     Initializes a non-blocking keyboard listener for real-time user interaction.
 
     This function sets up a listener for specific keys (right arrow, left arrow, escape) to control
     the program flow during execution, such as stopping recording or exiting loops. It gracefully
     handles headless environments where keyboard listening is not possible.
+
+    Args:
+        custom_handlers: Optional dictionary mapping key names to handler functions.
+                        Key names can be single characters (e.g., 'n') or special key names
+                        (e.g., 'right', 'left', 'esc'). Each handler function receives the
+                        events dictionary as its only argument.
 
     Returns:
         A tuple containing:
@@ -148,6 +154,7 @@ def init_keyboard_listener():
 
     def on_press(key):
         try:
+            # Handle default keys
             if key == keyboard.Key.right:
                 print("Right arrow key pressed. Exiting loop...")
                 events["exit_early"] = True
@@ -159,6 +166,20 @@ def init_keyboard_listener():
                 print("Escape key pressed. Stopping data recording...")
                 events["stop_recording"] = True
                 events["exit_early"] = True
+
+            # Handle custom keys
+            if custom_handlers:
+                # Check for character keys
+                if hasattr(key, "char") and key.char is not None:
+                    key_name = key.char
+                    if key_name in custom_handlers:
+                        custom_handlers[key_name](events)
+                # Check for special keys
+                elif hasattr(key, "name"):
+                    key_name = key.name
+                    if key_name in custom_handlers:
+                        custom_handlers[key_name](events)
+
         except Exception as e:
             print(f"Error handling key press: {e}")
 
