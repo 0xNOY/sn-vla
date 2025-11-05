@@ -223,6 +223,9 @@ class NarrationManager:
         self._next_narration_index += 1
         return narration, previous_narrations_str
 
+    def get_previous_narrations_str(self) -> str:
+        return "\n".join(self._previous_narrations)
+
     def get_next_narration(self) -> str | None:
         if self._next_narration_index >= len(self._narrations):
             return None
@@ -403,6 +406,10 @@ def record_loop(
             current_narration, previous_narrations_str = narration_manager.pop()
             next_narration = narration_manager.get_next_narration()
             logging.info(f"Inserted narration: {current_narration}")
+        elif narration_manager is not None and narration_manager.is_enabled():
+            current_narration = ""
+            previous_narrations_str = narration_manager.get_previous_narrations_str()
+            next_narration = narration_manager.get_next_narration()
 
         # Write to dataset
         if dataset is not None:
@@ -410,7 +417,7 @@ def record_loop(
             frame = {**observation_frame, **action_frame, "task": single_task}
 
             # Add narration data if narration manager is enabled
-            if narration_occurred:
+            if narration_manager is not None and narration_manager.is_enabled():
                 frame["previous_narrations"] = previous_narrations_str
                 frame["current_narration"] = current_narration
 
