@@ -524,6 +524,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         teleop.connect()
 
     # Initialize narration manager
+    if cfg.dataset.narrations is None:
+        cfg.dataset.narrations = []
     narration_manager = NarrationManager(narrations=cfg.dataset.narrations)
 
     # Setup custom keyboard handlers for narration
