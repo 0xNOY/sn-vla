@@ -24,6 +24,7 @@ from accelerate import Accelerator
 from termcolor import colored
 from torch.optim import Optimizer
 
+import lerobot.policies  # noqa: F401 - Import to register all policy configs
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.factory import make_dataset

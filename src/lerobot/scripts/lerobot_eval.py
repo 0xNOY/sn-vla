@@ -69,6 +69,7 @@ from termcolor import colored
 from torch import Tensor, nn
 from tqdm import trange
 
+import lerobot.policies  # noqa: F401 - Import to register all policy configs
 from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
 from lerobot.envs.factory import make_env

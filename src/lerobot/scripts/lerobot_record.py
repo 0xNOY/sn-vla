@@ -65,6 +65,7 @@ from pathlib import Path
 from pprint import pformat
 from typing import Any
 
+import lerobot.policies  # noqa: F401 - Import to register all policy configs
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
 )
