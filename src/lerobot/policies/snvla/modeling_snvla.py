@@ -41,13 +41,30 @@ class SNVLACore(nn.Module):
     _prepare_attention_masks_4d = PI05Pytorch._prepare_attention_masks_4d
     sample_noise = PI05Pytorch.sample_noise
     sample_time = PI05Pytorch.sample_time
-    embed_prefix = PI05Pytorch.embed_prefix
-    embed_suffix = PI05Pytorch.embed_suffix
     denoise_step = PI05Pytorch.denoise_step
+
+    def embed_prefix(self, images, img_masks, tokens, masks):
+        """Override embed_prefix to ensure dtype consistency."""
+        embs, pad_masks, att_masks = PI05Pytorch.embed_prefix(self, images, img_masks, tokens, masks)
+        # Ensure embeddings are in the correct dtype
+        embs = self._cast_to_dtype(embs)
+        return embs, pad_masks, att_masks
+
+    def embed_suffix(self, noisy_actions, timestep):
+        """Override embed_suffix to ensure dtype consistency."""
+        embs, pad_masks, att_masks, adarms_cond = PI05Pytorch.embed_suffix(self, noisy_actions, timestep)
+        # Ensure all outputs are in the correct dtype
+        embs = self._cast_to_dtype(embs)
+        if adarms_cond is not None:
+            adarms_cond = self._cast_to_dtype(adarms_cond)
+        return embs, pad_masks, att_masks, adarms_cond
 
     def __init__(self, config: SNVLAConfig):
         super().__init__()
         self.config = config
+
+        # Determine the target dtype
+        self.target_dtype = self._get_dtype(config.dtype)
 
         paligemma_config = get_gemma_config(config.paligemma_variant)
         action_expert_config = get_gemma_config(config.action_expert_variant)
@@ -67,6 +84,25 @@ class SNVLACore(nn.Module):
         self.diffusion_loss_coeff = config.diffusion_loss_coeff
 
         self.gradient_checkpointing_enabled = False
+
+        # Convert all parameters to the target dtype
+        if self.target_dtype is not None:
+            self.to(self.target_dtype)
+
+    def _get_dtype(self, dtype_str: str) -> torch.dtype | None:
+        """Convert dtype string to torch dtype."""
+        dtype_map = {
+            "bfloat16": torch.bfloat16,
+            "float16": torch.float16,
+            "float32": torch.float32,
+        }
+        return dtype_map.get(dtype_str)
+
+    def _cast_to_dtype(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Cast tensor to target dtype if needed."""
+        if self.target_dtype is not None and tensor.dtype != self.target_dtype:
+            return tensor.to(self.target_dtype)
+        return tensor
 
     @property
     def device(self) -> torch.device:
@@ -94,8 +130,16 @@ class SNVLACore(nn.Module):
         if actions.device != device:
             actions = actions.to(device)
 
+        # Cast actions to target dtype
+        actions = self._cast_to_dtype(actions)
+
         noise = self.sample_noise(actions.shape, device)
         time = self.sample_time(actions.shape[0], device)
+
+        # Cast noise and time to target dtype
+        noise = self._cast_to_dtype(noise)
+        time = self._cast_to_dtype(time)
+
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
@@ -104,6 +148,7 @@ class SNVLACore(nn.Module):
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, language_tokens, language_padding_masks
         )
+
         prefix_att_masks = prefix_att_masks.clone()
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)
 

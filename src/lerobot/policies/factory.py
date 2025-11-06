@@ -37,6 +37,7 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
+from lerobot.policies.snvla.configuration_snvla import SNVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.utils import validate_visual_features_consistency
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
@@ -59,7 +60,7 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
 
     Args:
         name: The name of the policy. Supported names are "tdmpc", "diffusion", "act",
-              "vqbet", "pi0", "pi05", "sac", "reward_classifier", "smolvla".
+              "vqbet", "pi0", "pi05", "sac", "reward_classifier", "smolvla", "snvla".
 
     Returns:
         The policy class corresponding to the given name.
@@ -107,6 +108,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.groot.modeling_groot import GrootPolicy
 
         return GrootPolicy
+    elif name == "snvla":
+        from lerobot.policies.snvla.modeling_snvla import SNVLAPolicy
+
+        return SNVLAPolicy
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
@@ -121,7 +126,7 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     Args:
         policy_type: The type of the policy. Supported types include "tdmpc",
                      "diffusion", "act", "vqbet", "pi0", "pi05", "sac", "smolvla",
-                     "reward_classifier".
+                     "snvla", "reward_classifier".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -150,6 +155,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return RewardClassifierConfig(**kwargs)
     elif policy_type == "groot":
         return GrootConfig(**kwargs)
+    elif policy_type == "snvla":
+        return SNVLAConfig(**kwargs)
     else:
         raise ValueError(f"Policy type '{policy_type}' is not available.")
 
@@ -207,8 +214,13 @@ def make_pre_post_processors(
             policy configuration type.
     """
     if pretrained_path:
+        # Special handling for policies that need custom processors even when loading from pretrained
+        # SNVLA: Always create new processors since it has custom tokenization different from PI05
+        if isinstance(policy_cfg, SNVLAConfig):
+            # Don't load pretrained processors for SNVLA - create new ones instead
+            pretrained_path = None
         # TODO(Steven): Temporary patch, implement correctly the processors for Gr00t
-        if isinstance(policy_cfg, GrootConfig):
+        elif isinstance(policy_cfg, GrootConfig):
             # GROOT handles normalization in groot_pack_inputs_v3 step
             # Need to override both stats AND normalize_min_max since saved config might be empty
             preprocessor_overrides = {}
@@ -228,6 +240,7 @@ def make_pre_post_processors(
             kwargs["preprocessor_overrides"] = preprocessor_overrides
             kwargs["postprocessor_overrides"] = postprocessor_overrides
 
+    if pretrained_path:
         return (
             PolicyProcessorPipeline.from_pretrained(
                 pretrained_model_name_or_path=pretrained_path,
@@ -286,6 +299,15 @@ def make_pre_post_processors(
         from lerobot.policies.pi0.processor_pi0 import make_pi0_pre_post_processors
 
         processors = make_pi0_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    # Check SNVLAConfig before PI05Config since SNVLAConfig inherits from PI05Config
+    elif isinstance(policy_cfg, SNVLAConfig):
+        from lerobot.policies.snvla.processor_snvla import make_snvla_pre_post_processors
+
+        processors = make_snvla_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )

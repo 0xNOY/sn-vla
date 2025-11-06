@@ -6,7 +6,6 @@ import torch
 from transformers import AutoTokenizer
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.policies.pi05.processor_pi05 import pad_vector
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -70,14 +69,6 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
             self.config.begin_of_action_token_id
         )
 
-    def _discretize_state(self, state: torch.Tensor) -> str:
-        """Discretizes state vector into a string."""
-        state = pad_vector(state, self.max_state_dim)
-        state_np = state.cpu().numpy()
-        # 状態はNormalizerProcessorStepによって[-1, 1]に正規化済みと仮定
-        discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
-        return " ".join(map(str, discretized_states))
-
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
 
@@ -85,80 +76,117 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
         if state is None:
             raise ValueError("State is required for SN-VLA")
 
-        task = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.task_key)
-        if task is None:
+        tasks = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.task_key)
+        if tasks is None:
             raise ValueError(f"'{self.task_key}' not found in complementary data.")
 
-        current_narration = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(CURRENT_NARRATION)
-        if current_narration is None:
+        current_narrations = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(CURRENT_NARRATION)
+        if current_narrations is None:
             raise ValueError(f"'{CURRENT_NARRATION}' (ground-truth) not found.")
 
-        previous_narrations = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(PREVIOUS_NARRATIONS)
-        if previous_narrations is None:
+        previous_narrations_list = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(
+            PREVIOUS_NARRATIONS
+        )
+        if previous_narrations_list is None:
             raise ValueError(f"'{PREVIOUS_NARRATIONS}' (ground-truth) not found.")
 
-        state_str = self._discretize_state(state)
-        previous_narrations = previous_narrations.split("\n")
+        # Discretize states for the entire batch
+        state_np = state.cpu().numpy()
+        discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
 
-        # プレフィックス: コンテキスト
-        prefix_str = make_prefix_prompt(task, previous_narrations, state_str)
+        # Process each item in the batch
+        all_input_ids = []
+        all_attention_masks = []
+        all_ar_masks = []
+        all_loss_masks = []
 
-        # サフィックス: 予測ターゲット
-        current_narration = current_narration.strip()
-        if current_narration:
-            # ナレーション生成モード
-            suffix_str = (
-                f"{self.begin_of_narration_token}{current_narration.strip()}{self.tokenizer.eos_token}"
+        batch_size = state.shape[0]
+        for i in range(batch_size):
+            # Get data for this batch item
+            task = tasks[i] if isinstance(tasks, list) else tasks
+            current_narration = (
+                current_narrations[i] if isinstance(current_narrations, list) else current_narrations
             )
-        else:
-            # 行動生成モード
-            suffix_str = f"{self.begin_of_action_token}"
+            previous_narrations_str = (
+                previous_narrations_list[i]
+                if isinstance(previous_narrations_list, list)
+                else previous_narrations_list
+            )
 
-        prefix_data = self.tokenizer(
-            prefix_str,
-            add_special_tokens=False,
-            return_attention_mask=True,
-            truncation=False,  # 最大長は後で全体に適用
-        )
-        suffix_data = self.tokenizer(
-            suffix_str,
-            add_special_tokens=False,
-            return_attention_mask=True,
-            truncation=False,
-        )
+            # Prepare state string for this item
+            state_str = " ".join(map(str, discretized_states[i]))
 
-        input_ids = prefix_data["input_ids"] + suffix_data["input_ids"]
-        attention_mask = prefix_data["attention_mask"] + suffix_data["attention_mask"]
+            # Split previous narrations
+            if isinstance(previous_narrations_str, str):
+                previous_narrations = previous_narrations_str.split("\n") if previous_narrations_str else []
+            else:
+                previous_narrations = []
 
-        # ARマスクを作成: プレフィックス(0)は相互参照可, サフィックス(1)は自己回帰
-        token_ar_mask = [0] * len(prefix_data["input_ids"]) + [1] * len(suffix_data["input_ids"])
+            # プレフィックス: コンテキスト
+            prefix_str = make_prefix_prompt(task, previous_narrations, state_str)
 
-        # 損失マスクを作成: サフィックス部分のみでテキスト損失を計算
-        token_loss_mask = [0] * len(prefix_data["input_ids"]) + [1] * len(suffix_data["input_ids"])
+            # サフィックス: 予測ターゲット
+            current_narration_clean = current_narration.strip() if isinstance(current_narration, str) else ""
 
-        # 全体をパディング
-        max_len = self.config.tokenizer_max_length
-        pad_len = max_len - len(input_ids)
+            if current_narration_clean:
+                # ナレーション生成モード
+                suffix_str = (
+                    f"{self.begin_of_narration_token}{current_narration_clean}{self.tokenizer.eos_token}"
+                )
+            else:
+                # 行動生成モード
+                suffix_str = f"{self.begin_of_action_token}"
 
-        if pad_len < 0:
-            # トークンが長すぎる場合は切り捨て
-            input_ids = input_ids[:max_len]
-            attention_mask = attention_mask[:max_len]
-            token_ar_mask = token_ar_mask[:max_len]
-            token_loss_mask = token_loss_mask[:max_len]
-        else:
-            # パディング
-            input_ids += [self.tokenizer.pad_token_id] * pad_len
-            attention_mask += [0] * pad_len
-            token_ar_mask += [0] * pad_len
-            token_loss_mask += [0] * pad_len
+            prefix_data = self.tokenizer(
+                prefix_str,
+                add_special_tokens=False,
+                return_attention_mask=True,
+                truncation=False,  # 最大長は後で全体に適用
+            )
+            suffix_data = self.tokenizer(
+                suffix_str,
+                add_special_tokens=False,
+                return_attention_mask=True,
+                truncation=False,
+            )
 
-        # Transitionオブジェクトに書き戻す
+            input_ids = prefix_data["input_ids"] + suffix_data["input_ids"]
+            attention_mask = prefix_data["attention_mask"] + suffix_data["attention_mask"]
+
+            # ARマスクを作成: プレフィックス(0)は相互参照可, サフィックス(1)は自己回帰
+            token_ar_mask = [0] * len(prefix_data["input_ids"]) + [1] * len(suffix_data["input_ids"])
+
+            # 損失マスクを作成: サフィックス部分のみでテキスト損失を計算
+            token_loss_mask = [0] * len(prefix_data["input_ids"]) + [1] * len(suffix_data["input_ids"])
+
+            # 全体をパディング
+            max_len = self.config.tokenizer_max_length
+            pad_len = max_len - len(input_ids)
+
+            if pad_len < 0:
+                # トークンが長すぎる場合は切り捨て
+                input_ids = input_ids[:max_len]
+                attention_mask = attention_mask[:max_len]
+                token_ar_mask = token_ar_mask[:max_len]
+                token_loss_mask = token_loss_mask[:max_len]
+            else:
+                # パディング
+                input_ids += [self.tokenizer.pad_token_id] * pad_len
+                attention_mask += [0] * pad_len
+                token_ar_mask += [0] * pad_len
+                token_loss_mask += [0] * pad_len
+
+            all_input_ids.append(input_ids)
+            all_attention_masks.append(attention_mask)
+            all_ar_masks.append(token_ar_mask)
+            all_loss_masks.append(token_loss_mask)
+
+        # Convert to tensors and stack
         obs = transition.get(TransitionKey.OBSERVATION, {})
-        obs[OBS_LANGUAGE_TOKENS] = torch.tensor(input_ids, dtype=torch.long)
-        obs[OBS_LANGUAGE_ATTENTION_MASK] = torch.tensor(attention_mask, dtype=torch.bool)
-        obs[OBS_LANGUAGE_TOKEN_AR_MASK] = torch.tensor(token_ar_mask, dtype=torch.bool)
-        obs[OBS_LANGUAGE_TOKEN_LOSS_MASK] = torch.tensor(token_loss_mask, dtype=torch.bool)
+        obs[OBS_LANGUAGE_TOKENS] = torch.tensor(all_input_ids, dtype=torch.long)
+        obs[OBS_LANGUAGE_ATTENTION_MASK] = torch.tensor(all_attention_masks, dtype=torch.bool)
+        obs[OBS_LANGUAGE_TOKEN_AR_MASK] = torch.tensor(all_ar_masks, dtype=torch.bool)
+        obs[OBS_LANGUAGE_TOKEN_LOSS_MASK] = torch.tensor(all_loss_masks, dtype=torch.bool)
 
         transition[TransitionKey.OBSERVATION] = obs
         return transition

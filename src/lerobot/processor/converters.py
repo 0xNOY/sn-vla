@@ -158,7 +158,8 @@ def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
     """
     Extract complementary data from a batch dictionary.
 
-    This includes padding flags, task description, and indices.
+    This includes padding flags, task description, indices, and policy-specific
+    complementary data (e.g., narrations for SNVLA).
 
     Args:
         batch: The batch dictionary.
@@ -166,12 +167,29 @@ def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
     Returns:
         A dictionary with the extracted complementary data.
     """
+    from lerobot.utils.constants import CURRENT_NARRATION, PREVIOUS_NARRATIONS
+
     pad_keys = {k: v for k, v in batch.items() if "_is_pad" in k}
     task_key = {"task": batch["task"]} if "task" in batch else {}
     index_key = {"index": batch["index"]} if "index" in batch else {}
     task_index_key = {"task_index": batch["task_index"]} if "task_index" in batch else {}
 
-    return {**pad_keys, **task_key, **index_key, **task_index_key}
+    # SNVLA-specific keys
+    current_narration_key = (
+        {CURRENT_NARRATION: batch[CURRENT_NARRATION]} if CURRENT_NARRATION in batch else {}
+    )
+    previous_narrations_key = (
+        {PREVIOUS_NARRATIONS: batch[PREVIOUS_NARRATIONS]} if PREVIOUS_NARRATIONS in batch else {}
+    )
+
+    return {
+        **pad_keys,
+        **task_key,
+        **index_key,
+        **task_index_key,
+        **current_narration_key,
+        **previous_narrations_key,
+    }
 
 
 def create_transition(
