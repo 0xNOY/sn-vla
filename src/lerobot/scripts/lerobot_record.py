@@ -525,8 +525,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     # Initialize narration manager
     if cfg.dataset.narrations is None:
-        cfg.dataset.narrations = []
-    narration_manager = NarrationManager(narrations=cfg.dataset.narrations)
+        narration_manager = None
+    else:
+        narration_manager = NarrationManager(narrations=cfg.dataset.narrations)
 
     # Setup custom keyboard handlers for narration
     custom_events = {}
