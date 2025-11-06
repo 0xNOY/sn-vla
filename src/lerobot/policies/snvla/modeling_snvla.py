@@ -281,16 +281,13 @@ class SNVLAPolicy(PI05Policy):
         if config.compile_model:
             logging.info("Compiling SN-VLA inference steps...")
             # Disable CUDA graphs to avoid issues with KV cache reuse
-            compile_options = {"triton.cudagraphs": False}
-            self._prefill = torch.compile(
-                self._prefill, mode=config.compile_mode, dynamic=True, options=compile_options
-            )
-            self._narrate_step = torch.compile(
-                self._narrate_step, mode=config.compile_mode, dynamic=True, options=compile_options
-            )
-            self._act = torch.compile(
-                self._act, mode=config.compile_mode, dynamic=True, options=compile_options
-            )
+            # Note: Cannot specify both mode and options, so we only use options
+            compile_options = {
+                "triton.cudagraphs": False,
+            }
+            self._prefill = torch.compile(self._prefill, dynamic=True, options=compile_options)
+            self._narrate_step = torch.compile(self._narrate_step, dynamic=True, options=compile_options)
+            self._act = torch.compile(self._act, dynamic=True, options=compile_options)
 
         self.reset()
 
