@@ -391,9 +391,11 @@ class SNVLAPolicy(PI05Policy):
 
         actions_shape = (bsize, self.config.chunk_size, self.config.max_action_dim)
         noise = self.model.sample_noise(actions_shape, device)
+        # Cast noise to target dtype for consistency
+        noise = self.model._cast_to_dtype(noise)
 
         x_t = noise
-        time = torch.tensor(1.0, dtype=torch.float32, device=device)
+        time = torch.tensor(1.0, dtype=self.model.target_dtype or torch.float32, device=device)
 
         # denoise_step loop
         while time >= -dt / 2:
@@ -405,8 +407,10 @@ class SNVLAPolicy(PI05Policy):
                 x_t=x_t,
                 timestep=expanded_time,
             )
+            # Cast v_t to match x_t dtype for consistency
+            v_t = self.model._cast_to_dtype(v_t)
             x_t = x_t + dt * v_t
-            time += dt
+            time = time + dt
 
         actions = x_t
 
