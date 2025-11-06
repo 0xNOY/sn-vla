@@ -209,9 +209,9 @@ class RecordConfig:
 
 
 class NarrationManager:
-    def __init__(self, narrations: list[str]):
+    def __init__(self, narrations: list[str] | None):
         self._next_narration_index = 0
-        self._narrations = narrations
+        self._narrations = narrations if narrations is not None else []
         self._previous_narrations: list[str] = []
 
     def pop(self) -> tuple[str, str]:
@@ -243,7 +243,7 @@ class NarrationManager:
         return len(self._narrations) > 0
 
     def should_end_episode(self) -> bool:
-        return not self.has_narrations()
+        return not self.has_narrations() and self.is_enabled()
 
 
 """ --------------- record_loop() data flow --------------------------
@@ -300,6 +300,9 @@ def record_loop(
     display_data: bool = False,
     narration_manager: NarrationManager | None = None,
 ):
+    if narration_manager is None:
+        narration_manager = NarrationManager(narrations=None)
+
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
@@ -339,7 +342,7 @@ def record_loop(
             break
 
         # Check if episode should end due to narration completion
-        if narration_manager is not None and narration_manager.should_end_episode():
+        if narration_manager.should_end_episode():
             logging.info("All narrations consumed. Ending episode.")
             break
 
@@ -403,12 +406,12 @@ def record_loop(
         _sent_action = robot.send_action(robot_action_to_send)
 
         narration_occurred = events.get("narration_occurred", False)
-        if narration_occurred and narration_manager is not None:
+        if narration_occurred:
             events["narration_occurred"] = False
             current_narration, previous_narrations_str = narration_manager.pop()
             next_narration = narration_manager.get_next_narration()
             logging.info(f"Inserted narration: {current_narration}")
-        elif narration_manager is not None and narration_manager.is_enabled():
+        elif narration_manager.is_enabled():
             current_narration = ""
             previous_narrations_str = narration_manager.get_previous_narrations_str()
             next_narration = narration_manager.get_next_narration()
@@ -419,7 +422,7 @@ def record_loop(
             frame = {**observation_frame, **action_frame, "task": single_task}
 
             # Add narration data if narration manager is enabled
-            if narration_manager is not None and narration_manager.is_enabled():
+            if narration_manager.is_enabled():
                 frame["previous_narrations"] = previous_narrations_str
                 frame["current_narration"] = current_narration
 
@@ -429,9 +432,7 @@ def record_loop(
             log_rerun_data(observation=obs_processed, action=action_values)
 
             # Display narration state only when state has changed (initial frame or after 'n' key press)
-            if narration_occurred or (
-                narration_manager is not None and narration_manager.is_enabled() and timestamp == 0
-            ):
+            if narration_occurred or (narration_manager.is_enabled() and timestamp == 0):
                 log_rerun_narrations(
                     current_narration=current_narration,
                     previous_narrations_str=previous_narrations_str,
@@ -524,10 +525,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         teleop.connect()
 
     # Initialize narration manager
-    if cfg.dataset.narrations is None:
-        narration_manager = None
-    else:
-        narration_manager = NarrationManager(narrations=cfg.dataset.narrations)
+    narration_manager = NarrationManager(narrations=cfg.dataset.narrations)
 
     # Setup custom keyboard handlers for narration
     custom_events = {}
