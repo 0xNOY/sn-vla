@@ -41,7 +41,6 @@ class SNVLACore(nn.Module):
     _prepare_attention_masks_4d = PI05Pytorch._prepare_attention_masks_4d
     sample_noise = PI05Pytorch.sample_noise
     sample_time = PI05Pytorch.sample_time
-    denoise_step = PI05Pytorch.denoise_step
 
     def embed_prefix(self, images, img_masks, tokens, masks):
         """Override embed_prefix to ensure dtype consistency."""
@@ -58,6 +57,51 @@ class SNVLACore(nn.Module):
         if adarms_cond is not None:
             adarms_cond = self._cast_to_dtype(adarms_cond)
         return embs, pad_masks, att_masks, adarms_cond
+
+    def denoise_step(
+        self,
+        prefix_pad_masks,
+        past_key_values,
+        x_t,
+        timestep,
+    ):
+        """
+        Apply one denoising step of the noise `x_t` at a given timestep.
+        Override to maintain dtype consistency throughout the computation.
+        """
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, timestep)
+
+        suffix_len = suffix_pad_masks.shape[1]
+        batch_size = prefix_pad_masks.shape[0]
+        prefix_len = prefix_pad_masks.shape[1]
+
+        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
+        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
+
+        prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
+
+        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
+        self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
+
+        outputs_embeds, _ = self.paligemma_with_expert.forward(
+            attention_mask=full_att_2d_masks_4d,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=[None, suffix_embs],
+            use_cache=False,
+            adarms_cond=[None, adarms_cond],
+        )
+
+        suffix_out = outputs_embeds[1]
+        suffix_out = suffix_out[:, -self.config.chunk_size :]
+        # DO NOT cast to float32 here - maintain model dtype for consistency
+        # suffix_out = suffix_out.to(dtype=torch.float32)  # REMOVED
+
+        # Ensure suffix_out matches target dtype before projection
+        suffix_out = self._cast_to_dtype(suffix_out)
+        return self.action_out_proj(suffix_out)
 
     def __init__(self, config: SNVLAConfig):
         super().__init__()
@@ -387,7 +431,7 @@ class SNVLAPolicy(PI05Policy):
 
         # 拡散モデルのサンプリング
         num_steps = self.config.num_inference_steps
-        dt = -1.0 / num_steps
+        dt = torch.tensor(-1.0 / num_steps, dtype=self.model.target_dtype or torch.float32, device=device)
 
         actions_shape = (bsize, self.config.chunk_size, self.config.max_action_dim)
         noise = self.model.sample_noise(actions_shape, device)
@@ -398,7 +442,7 @@ class SNVLAPolicy(PI05Policy):
         time = torch.tensor(1.0, dtype=self.model.target_dtype or torch.float32, device=device)
 
         # denoise_step loop
-        while time >= -dt / 2:
+        while time.item() >= -dt.item() / 2:
             expanded_time = time.expand(bsize)
 
             v_t = self.model.denoise_step(
@@ -407,8 +451,7 @@ class SNVLAPolicy(PI05Policy):
                 x_t=x_t,
                 timestep=expanded_time,
             )
-            # Cast v_t to match x_t dtype for consistency
-            v_t = self.model._cast_to_dtype(v_t)
+            # v_t should already be in correct dtype from denoise_step
             x_t = x_t + dt * v_t
             time = time + dt
 
