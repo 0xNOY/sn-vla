@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -82,13 +83,15 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
 
         current_narrations = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(CURRENT_NARRATION)
         if current_narrations is None:
-            raise ValueError(f"'{CURRENT_NARRATION}' (ground-truth) not found.")
+            logging.warning(f"'{CURRENT_NARRATION}' (ground-truth) not found.")
+            current_narrations = [""] * state.shape[0]
 
         previous_narrations_list = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(
             PREVIOUS_NARRATIONS
         )
         if previous_narrations_list is None:
-            raise ValueError(f"'{PREVIOUS_NARRATIONS}' (ground-truth) not found.")
+            logging.warning(f"'{PREVIOUS_NARRATIONS}' (ground-truth) not found.")
+            previous_narrations_list = [""] * state.shape[0]
 
         # Discretize states for the entire batch
         state_np = state.cpu().numpy()
