@@ -259,7 +259,7 @@ class SNVLAPolicy(PI05Policy):
 
     def _build_prompt_and_tokenize(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         # 初期指示はバッチから取得 (B=1を仮定 for inference)
-        task = batch[COMPLEMENTARY_DATA][TASK_KEY][0]
+        task = batch[TASK_KEY][0]
         state = batch[OBS_STATE]
 
         state_str = self._discretize_state(state)
