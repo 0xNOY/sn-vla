@@ -376,11 +376,33 @@ def main():
         api = HfApi()
         api.create_repo(repo_id=args.output_repo, repo_type="dataset", exist_ok=True)
 
+        # データセット全体をアップロード
         api.upload_folder(
             folder_path=str(output_path),
             repo_id=args.output_repo,
             repo_type="dataset",
         )
+
+        # バージョンタグを作成（info.jsonから_version_を読み取る）
+        try:
+            info_path = output_path / "meta" / "info.json"
+            if info_path.exists():
+                with open(info_path) as f:
+                    info = json.load(f)
+                    version = info.get("codebase_version", "v2.0")
+
+                logging.info(f"Creating version tag: {version}")
+                api.create_tag(
+                    repo_id=args.output_repo,
+                    tag=version,
+                    repo_type="dataset",
+                    tag_message=f"Dataset version {version} - augmented with window_size={args.window_size}",
+                )
+                logging.info(f"Version tag '{version}' created successfully")
+            else:
+                logging.warning(f"info.json not found at {info_path}, skipping tag creation")
+        except Exception as e:
+            logging.warning(f"Failed to create version tag: {e}")
 
         logging.info(f"Successfully pushed to: https://huggingface.co/datasets/{args.output_repo}")
 
