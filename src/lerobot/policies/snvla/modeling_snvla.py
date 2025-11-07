@@ -17,7 +17,6 @@ from lerobot.policies.pi05.modeling_pi05 import (
 )
 from lerobot.utils.constants import (
     ACTION,
-    COMPLEMENTARY_DATA,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
     OBS_STATE,
@@ -273,6 +272,10 @@ class SNVLAPolicy(PI05Policy):
 
         self.tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_name)
 
+        # 正規化統計を保存（推論時に使用）
+        self.observation_stats = None
+        self.action_stats = None
+
         if config.gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
 
@@ -300,7 +303,8 @@ class SNVLAPolicy(PI05Policy):
 
     def _discretize_state(self, state: torch.Tensor) -> str:
         state = pad_vector(state, self.config.max_state_dim)
-        # 推論時、状態は正規化済みと仮定
+        # 注意: select_action内で状態は既に正規化されている必要がある
+        # 正規化された状態（-1 ~ 1の範囲）を256個のビンに離散化
         state_np = state.cpu().numpy()
         discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
         # (B, D) -> B個の文字列。推論はB=1を仮定
@@ -447,7 +451,7 @@ class SNVLAPolicy(PI05Policy):
         time = torch.tensor(1.0, dtype=self.model.target_dtype or torch.float32, device=device)
 
         # denoise_step loop
-        while time.item() >= -dt.item() / 2:
+        while time >= -dt / 2:
             expanded_time = time.expand(bsize)
 
             v_t = self.model.denoise_step(
@@ -466,6 +470,16 @@ class SNVLAPolicy(PI05Policy):
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions_unpadded = actions[:, : self.config.n_action_steps, :original_action_dim]
 
+        # アクションを逆正規化（推論時にプロセッサーをバイパスするため）
+        if self.action_stats is not None and "mean" in self.action_stats and "std" in self.action_stats:
+            mean = self.action_stats["mean"].to(actions_unpadded.device)
+            std = self.action_stats["std"].to(actions_unpadded.device)
+            # 元のアクション次元に合わせて統計をスライス
+            mean = mean[:original_action_dim]
+            std = std[:original_action_dim]
+            actions_unpadded = actions_unpadded * std + mean
+            logging.debug("Applied denormalization to actions in _act")
+
         self._action_queue.extend(actions_unpadded.transpose(0, 1))
 
     @torch.no_grad()
@@ -476,6 +490,17 @@ class SNVLAPolicy(PI05Policy):
         # アクションキュー確認
         if len(self._action_queue) > 0:
             return self._action_queue.popleft()
+
+        # 状態を正規化（推論時にプロセッサーをバイパスするため）
+        if self.observation_stats is not None and OBS_STATE in batch:
+            state = batch[OBS_STATE]
+            if OBS_STATE in self.observation_stats:
+                stats = self.observation_stats[OBS_STATE]
+                if "mean" in stats and "std" in stats:
+                    mean = stats["mean"].to(state.device)
+                    std = stats["std"].to(state.device)
+                    batch[OBS_STATE] = (state - mean) / (std + 1e-8)
+                    logging.debug("Applied normalization to state in select_action")
 
         # 観測の準備
         images, img_masks = self._preprocess_images(batch)
@@ -560,3 +585,77 @@ class SNVLAPolicy(PI05Policy):
             language_loss_masks=language_loss_masks,
             diffusion_loss_masks=diffusion_loss_masks,
         )
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, **kwargs):
+        """
+        Load pretrained model and extract normalization statistics from the preprocessor.
+
+        This override ensures that normalization stats are loaded for inference,
+        since SNVLA bypasses the preprocessor pipeline during select_action.
+        """
+        # 親クラスのfrom_pretrainedを呼び出してモデルを読み込む
+        model = super().from_pretrained(pretrained_model_name_or_path, **kwargs)
+
+        # プリプロセッサーから正規化統計を抽出
+        try:
+            import json
+            from pathlib import Path
+
+            from huggingface_hub import hf_hub_download
+            from safetensors.torch import load_file
+
+            # プリプロセッサーを読み込む
+            if isinstance(pretrained_model_name_or_path, (str, Path)):
+                try:
+                    # プリプロセッサー設定を読み込んで normalizer_processor ステップを探す
+                    config_path = hf_hub_download(
+                        repo_id=str(pretrained_model_name_or_path),
+                        filename="policy_preprocessor.json",
+                    )
+                    with open(config_path) as f:
+                        preprocessor_config = json.load(f)
+
+                    # normalizer_processor ステップを探す
+                    normalizer_step = None
+                    for step in preprocessor_config.get("steps", []):
+                        if step.get("registry_name") == "normalizer_processor":
+                            normalizer_step = step
+                            break
+
+                    if normalizer_step and "state_file" in normalizer_step:
+                        # 統計ファイルを直接読み込む
+                        stats_path = hf_hub_download(
+                            repo_id=str(pretrained_model_name_or_path),
+                            filename=normalizer_step["state_file"],
+                        )
+                        stats = load_file(stats_path)
+
+                        # 観測状態の統計
+                        if "observation.state.mean" in stats and "observation.state.std" in stats:
+                            model.observation_stats = {
+                                OBS_STATE: {
+                                    "mean": stats["observation.state.mean"],
+                                    "std": stats["observation.state.std"],
+                                }
+                            }
+                            logging.info("Loaded observation normalization stats from preprocessor")
+
+                        # アクションの統計
+                        if "action.mean" in stats and "action.std" in stats:
+                            model.action_stats = {
+                                "mean": stats["action.mean"],
+                                "std": stats["action.std"],
+                            }
+                            logging.info("Loaded action normalization stats from preprocessor")
+                    else:
+                        logging.warning("Could not find normalizer_processor step in preprocessor config")
+
+                except Exception as e:
+                    logging.warning(f"Could not load preprocessor stats: {e}")
+        except ImportError as e:
+            logging.warning(f"Could not import required modules for loading normalization stats: {e}")
+        except Exception as e:
+            logging.warning(f"Unexpected error while loading normalization stats: {e}")
+
+        return model
