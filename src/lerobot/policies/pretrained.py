@@ -79,7 +79,12 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
         else:
             state_dict = accelerator.get_state_dict(model_to_save)
-            save_file(state_dict, str(save_directory / SAFETENSORS_SINGLE_FILE))
+
+            # Clone tensors to avoid shared storage issues with safetensors
+            # This is necessary when using FSDP as some parameters may share storage
+            state_dict_cloned = {k: v.clone().contiguous() for k, v in state_dict.items()}
+
+            save_file(state_dict_cloned, str(save_directory / SAFETENSORS_SINGLE_FILE))
 
     @classmethod
     def from_pretrained(
