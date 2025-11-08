@@ -365,9 +365,6 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 logging.info(f"Checkpoint policy after step {step}")
                 checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
 
-                # Get the unwrapped model (still has FSDP artifacts)
-                unwrapped_policy = accelerator.unwrap_model(policy)
-
                 # Create a clean model instance from config to avoid FSDP shared tensor issues
                 from lerobot.policies.factory import make_policy as make_policy_from_config
 
@@ -450,9 +447,25 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if is_main_process:
         logging.info("End of training")
 
-        if cfg.policy.push_to_hub:
-            unwrapped_policy = accelerator.unwrap_model(policy)
-            unwrapped_policy.push_model_to_hub(cfg)
+    if cfg.policy.push_to_hub:
+        # Get state dict from FSDP model (all ranks participate in collective)
+        state_dict = accelerator.get_state_dict(policy)
+
+        if is_main_process:
+            # Create a clean model instance to avoid FSDP shared tensor issues
+            from lerobot.policies.factory import make_policy as make_policy_from_config
+
+            clean_policy = make_policy_from_config(
+                cfg=cfg.policy,
+                ds_meta=dataset.meta,
+                rename_map=cfg.rename_map,
+            )
+
+            # Load the gathered state dict into the clean model
+            clean_policy.load_state_dict(state_dict, strict=False)
+
+            # Push the clean model to hub
+            clean_policy.push_model_to_hub(cfg)
             preprocessor.push_to_hub(cfg.policy.repo_id)
             postprocessor.push_to_hub(cfg.policy.repo_id)
 
