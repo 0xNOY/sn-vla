@@ -358,11 +358,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             train_tracker.reset_averages()
 
         if cfg.save_checkpoint and is_saving_step:
+            state_dict = accelerator.get_state_dict(policy)
+
             if is_main_process:
                 logging.info(f"Checkpoint policy after step {step}")
                 checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
 
-                state_dict = accelerator.get_state_dict(policy)
                 unwrapped_policy = accelerator.unwrap_model(policy)
                 unwrapped_policy.load_state_dict(state_dict)
 
