@@ -27,7 +27,6 @@ from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import (
     load_model as load_model_as_safetensor,
-    save_file,
     save_model as save_model_as_safetensor,
 )
 from torch import Tensor, nn
@@ -72,19 +71,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     def _save_pretrained(self, save_directory: Path) -> None:
         self.config._save_pretrained(save_directory)
         model_to_save = self.module if hasattr(self, "module") else self
-
-        # Use the accelerator from the model if available (for FSDP support)
-        accelerator = getattr(self, "_accelerator", None)
-        if accelerator is None:
-            save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
-        else:
-            state_dict = accelerator.get_state_dict(model_to_save)
-
-            # Clone tensors to avoid shared storage issues with safetensors
-            # This is necessary when using FSDP as some parameters may share storage
-            state_dict_cloned = {k: v.clone().contiguous() for k, v in state_dict.items()}
-
-            save_file(state_dict_cloned, str(save_directory / SAFETENSORS_SINGLE_FILE))
+        save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
 
     @classmethod
     def from_pretrained(

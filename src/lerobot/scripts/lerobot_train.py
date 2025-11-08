@@ -298,8 +298,6 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
         policy, optimizer, dataloader, lr_scheduler
     )
-    # Store accelerator instance in policy for proper FSDP state_dict handling
-    policy._accelerator = accelerator
     dl_iter = cycle(dataloader)
 
     policy.train()
@@ -363,11 +361,16 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             if is_main_process:
                 logging.info(f"Checkpoint policy after step {step}")
                 checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
+
+                state_dict = accelerator.get_state_dict(policy)
+                unwrapped_policy = accelerator.unwrap_model(policy)
+                unwrapped_policy.load_state_dict(state_dict)
+
                 save_checkpoint(
                     checkpoint_dir=checkpoint_dir,
                     step=step,
                     cfg=cfg,
-                    policy=accelerator.unwrap_model(policy),
+                    policy=unwrapped_policy,
                     optimizer=optimizer,
                     scheduler=lr_scheduler,
                     preprocessor=preprocessor,
