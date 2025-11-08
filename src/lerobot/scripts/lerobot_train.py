@@ -376,7 +376,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
                 # Load the gathered state dict into the clean model
                 # Use strict=False to handle any FSDP-related key mismatches
-                clean_policy.load_state_dict(state_dict, strict=False)
+                incompatible_keys = clean_policy.load_state_dict(state_dict, strict=False)
+                if incompatible_keys:
+                    logging.warning(f"Incompatible keys found when loading state dict: {incompatible_keys}")
 
                 save_checkpoint(
                     checkpoint_dir=checkpoint_dir,
