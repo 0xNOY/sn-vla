@@ -20,9 +20,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TypedDict, TypeVar
 
-import accelerator
 import packaging
 import safetensors
+from accelerate import Accelerator
 from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
@@ -37,6 +37,7 @@ from lerobot.utils.hub import HubMixin
 
 T = TypeVar("T", bound="PreTrainedPolicy")
 
+accelerator = Accelerator()
 
 class ActionSelectKwargs(TypedDict, total=False):
     noise: Tensor | None
