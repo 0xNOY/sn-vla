@@ -587,7 +587,7 @@ class SNVLAPolicy(PI05Policy):
         )
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, **kwargs):
+    def from_pretrained(cls, pretrained_name_or_path, **kwargs):
         """
         Load pretrained model and extract normalization statistics from the preprocessor.
 
@@ -595,7 +595,7 @@ class SNVLAPolicy(PI05Policy):
         since SNVLA bypasses the preprocessor pipeline during select_action.
         """
         # 親クラスのfrom_pretrainedを呼び出してモデルを読み込む
-        model = super().from_pretrained(pretrained_model_name_or_path, **kwargs)
+        model = super().from_pretrained(pretrained_name_or_path, **kwargs)
 
         # プリプロセッサーから正規化統計を抽出
         try:
@@ -606,11 +606,11 @@ class SNVLAPolicy(PI05Policy):
             from safetensors.torch import load_file
 
             # プリプロセッサーを読み込む
-            if isinstance(pretrained_model_name_or_path, (str, Path)):
+            if isinstance(pretrained_name_or_path, (str, Path)):
                 try:
                     # プリプロセッサー設定を読み込んで normalizer_processor ステップを探す
                     config_path = hf_hub_download(
-                        repo_id=str(pretrained_model_name_or_path),
+                        repo_id=str(pretrained_name_or_path),
                         filename="policy_preprocessor.json",
                     )
                     with open(config_path) as f:
@@ -626,7 +626,7 @@ class SNVLAPolicy(PI05Policy):
                     if normalizer_step and "state_file" in normalizer_step:
                         # 統計ファイルを直接読み込む
                         stats_path = hf_hub_download(
-                            repo_id=str(pretrained_model_name_or_path),
+                            repo_id=str(pretrained_name_or_path),
                             filename=normalizer_step["state_file"],
                         )
                         stats = load_file(stats_path)
