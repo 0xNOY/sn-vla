@@ -242,8 +242,14 @@ class SNVLACore(nn.Module):
             reduction="none",
         )
 
+        # 重み付き損失マスク（0.0 = 無効、>0.0 = 重み係数）
         valid_loss_mask = language_loss_masks[:, 1:].float()
-        txt_loss = (txt_loss_raw * valid_loss_mask).sum() / valid_loss_mask.sum().clamp(min=1)
+
+        # 重み付き平均損失を計算
+        # マスク値が重みとして機能（1.0 = 通常、>1.0 = より重要）
+        weighted_loss = txt_loss_raw * valid_loss_mask
+        total_weight = valid_loss_mask.sum().clamp(min=1)
+        txt_loss = weighted_loss.sum() / total_weight
 
         # Total Loss
         loss = txt_loss + self.diffusion_loss_coeff * action_loss

@@ -160,9 +160,17 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
             token_ar_mask = [0] * len(prefix_data["input_ids"]) + [1] * len(suffix_data["input_ids"])
 
             # 損失マスクを作成: サフィックス部分のみでテキスト損失を計算
-            token_loss_mask = [0] * len(prefix_data["input_ids"]) + [1] * len(suffix_data["input_ids"])
+            # 実況がある場合は設定された重みを適用
+            prefix_loss_mask = [0.0] * len(prefix_data["input_ids"])
+            if current_narration_clean:
+                # 実況生成モード: 実況トークンに重みを適用
+                suffix_loss_mask = [self.config.narration_loss_weight] * len(suffix_data["input_ids"])
+            else:
+                # 行動生成モード: BOAトークンには損失を計算しない
+                suffix_loss_mask = [1.0] * len(suffix_data["input_ids"])
 
-            # 全体をパディング
+            token_loss_mask = prefix_loss_mask + suffix_loss_mask
+
             max_len = self.config.tokenizer_max_length
             pad_len = max_len - len(input_ids)
 
