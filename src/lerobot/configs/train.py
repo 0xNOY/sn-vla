@@ -106,7 +106,14 @@ class TrainPipelineConfig(HubMixin):
             else:
                 self.job_name = f"{self.env.type}_{self.policy.type}"
 
-        if not self.resume and isinstance(self.output_dir, Path) and self.output_dir.is_dir():
+        # Check if running in a distributed environment
+        # Only the main process (rank 0) should check/create directories to avoid race conditions
+        is_main_process = True
+        if "RANK" in os.environ:
+            # Running in distributed mode (e.g., with accelerate/torch.distributed)
+            is_main_process = int(os.environ.get("RANK", "0")) == 0
+
+        if is_main_process and not self.resume and isinstance(self.output_dir, Path) and self.output_dir.is_dir():
             raise FileExistsError(
                 f"Output directory {self.output_dir} already exists and resume is {self.resume}. "
                 f"Please change your output directory so that {self.output_dir} is not overwritten."
