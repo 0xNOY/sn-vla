@@ -358,24 +358,34 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             train_tracker.reset_averages()
 
         if cfg.save_checkpoint and is_saving_step:
+            # Get state dict from all ranks (required for FSDP collective operations)
+            state_dict = accelerator.get_state_dict(policy)
+
             if is_main_process:
                 logging.info(f"Checkpoint policy after step {step}")
                 checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
 
-            # Wait for all processes before getting state dict (required for FSDP)
-            accelerator.wait_for_everyone()
+                # Get the unwrapped model (still has FSDP artifacts)
+                unwrapped_policy = accelerator.unwrap_model(policy)
 
-            # Get unwrapped model - this already has the correct weights from FSDP
-            unwrapped_policy = accelerator.unwrap_model(policy)
+                # Create a clean model instance from config to avoid FSDP shared tensor issues
+                from lerobot.policies.factory import make_policy as make_policy_from_config
 
-            if is_main_process:
-                # For FSDP, accelerator.unwrap_model already provides the model with
-                # properly gathered weights, so we can save it directly
+                clean_policy = make_policy_from_config(
+                    cfg=cfg.policy,
+                    ds_meta=dataset.meta,
+                    rename_map=cfg.rename_map,
+                )
+
+                # Load the gathered state dict into the clean model
+                # Use strict=False to handle any FSDP-related key mismatches
+                clean_policy.load_state_dict(state_dict, strict=False)
+
                 save_checkpoint(
                     checkpoint_dir=checkpoint_dir,
                     step=step,
                     cfg=cfg,
-                    policy=unwrapped_policy,
+                    policy=clean_policy,
                     optimizer=optimizer,
                     scheduler=lr_scheduler,
                     preprocessor=preprocessor,
