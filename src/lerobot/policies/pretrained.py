@@ -25,7 +25,7 @@ import safetensors
 from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
-from safetensors.torch import load_model as load_model_as_safetensor, save_model as save_model_as_safetensor
+from safetensors.torch import load_model as load_model_as_safetensor, save_file
 from torch import Tensor, nn
 from typing_extensions import Unpack
 
@@ -68,17 +68,15 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     def _save_pretrained(self, save_directory: Path) -> None:
         self.config._save_pretrained(save_directory)
-        org_model = self.module if hasattr(self, "module") else self
+        model_to_save = self.module if hasattr(self, "module") else self
 
         # Clone state_dict to avoid shared storage issues with safetensors
         # This is necessary when using FSDP with mixed precision
-        state_dict = org_model.state_dict()
+        state_dict = model_to_save.state_dict()
         cloned_state_dict = {k: v.clone().contiguous() for k, v in state_dict.items()}
 
-        model_to_save = org_model.__class__.__new__(org_model.__class__)
-        model_to_save.load_state_dict(cloned_state_dict)
-
-        save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
+        # Use the cloned state dict for saving
+        save_file(cloned_state_dict, str(save_directory / SAFETENSORS_SINGLE_FILE))
 
     @classmethod
     def from_pretrained(
