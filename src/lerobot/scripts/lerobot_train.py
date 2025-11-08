@@ -358,15 +358,19 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             train_tracker.reset_averages()
 
         if cfg.save_checkpoint and is_saving_step:
-            state_dict = accelerator.get_state_dict(policy)
-
             if is_main_process:
                 logging.info(f"Checkpoint policy after step {step}")
                 checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
 
-                unwrapped_policy = accelerator.unwrap_model(policy)
-                unwrapped_policy.load_state_dict(state_dict)
+            # Wait for all processes before getting state dict (required for FSDP)
+            accelerator.wait_for_everyone()
 
+            # Get unwrapped model - this already has the correct weights from FSDP
+            unwrapped_policy = accelerator.unwrap_model(policy)
+
+            if is_main_process:
+                # For FSDP, accelerator.unwrap_model already provides the model with
+                # properly gathered weights, so we can save it directly
                 save_checkpoint(
                     checkpoint_dir=checkpoint_dir,
                     step=step,
