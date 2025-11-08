@@ -298,6 +298,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
         policy, optimizer, dataloader, lr_scheduler
     )
+    # Store accelerator instance in policy for proper FSDP state_dict handling
+    policy._accelerator = accelerator
     dl_iter = cycle(dataloader)
 
     policy.train()

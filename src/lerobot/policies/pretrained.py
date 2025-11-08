@@ -22,11 +22,14 @@ from typing import TypedDict, TypeVar
 
 import packaging
 import safetensors
-from accelerate import Accelerator
 from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
-from safetensors.torch import load_model as load_model_as_safetensor, save_file
+from safetensors.torch import (
+    load_model as load_model_as_safetensor,
+    save_file,
+    save_model as save_model_as_safetensor,
+)
 from torch import Tensor, nn
 from typing_extensions import Unpack
 
@@ -36,8 +39,6 @@ from lerobot.policies.utils import log_model_loading_keys
 from lerobot.utils.hub import HubMixin
 
 T = TypeVar("T", bound="PreTrainedPolicy")
-
-accelerator = Accelerator()
 
 class ActionSelectKwargs(TypedDict, total=False):
     noise: Tensor | None
@@ -72,10 +73,13 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         self.config._save_pretrained(save_directory)
         model_to_save = self.module if hasattr(self, "module") else self
 
-        state_dict = accelerator.get_state_dict(model_to_save)
-
-        # Use the cloned state dict for saving
-        save_file(state_dict, str(save_directory / SAFETENSORS_SINGLE_FILE))
+        # Use the accelerator from the model if available (for FSDP support)
+        accelerator = getattr(self, "_accelerator", None)
+        if accelerator is None:
+            save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
+        else:
+            state_dict = accelerator.get_state_dict(model_to_save)
+            save_file(state_dict, str(save_directory / SAFETENSORS_SINGLE_FILE))
 
     @classmethod
     def from_pretrained(
