@@ -20,6 +20,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TypedDict, TypeVar
 
+import accelerator
 import packaging
 import safetensors
 from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download
@@ -70,13 +71,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         self.config._save_pretrained(save_directory)
         model_to_save = self.module if hasattr(self, "module") else self
 
-        # Clone state_dict to avoid shared storage issues with safetensors
-        # This is necessary when using FSDP with mixed precision
-        state_dict = model_to_save.state_dict()
-        cloned_state_dict = {k: v.clone().contiguous() for k, v in state_dict.items()}
+        state_dict = accelerator.get_state_dict(model_to_save)
 
         # Use the cloned state dict for saving
-        save_file(cloned_state_dict, str(save_directory / SAFETENSORS_SINGLE_FILE))
+        save_file(state_dict, str(save_directory / SAFETENSORS_SINGLE_FILE))
 
     @classmethod
     def from_pretrained(
