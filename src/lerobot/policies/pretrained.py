@@ -69,7 +69,14 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     def _save_pretrained(self, save_directory: Path) -> None:
         self.config._save_pretrained(save_directory)
         model_to_save = self.module if hasattr(self, "module") else self
-        save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
+
+        # Clone state_dict to avoid shared storage issues with safetensors
+        # This is necessary when using FSDP with mixed precision
+        state_dict = model_to_save.state_dict()
+        cloned_state_dict = {k: v.clone().contiguous() for k, v in state_dict.items()}
+
+        # Use the cloned state dict for saving
+        save_model_as_safetensor(cloned_state_dict, str(save_directory / SAFETENSORS_SINGLE_FILE))
 
     @classmethod
     def from_pretrained(
