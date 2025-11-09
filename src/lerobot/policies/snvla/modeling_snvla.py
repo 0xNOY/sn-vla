@@ -253,11 +253,17 @@ class SNVLACore(nn.Module):
 
         # Total Loss
         loss = txt_loss + self.diffusion_loss_coeff * action_loss
+        is_loss_positive = loss.item() > 0
 
         info = {
             "loss": loss.item(),
             "text_loss": txt_loss.item(),
             "action_loss": action_loss.item(),
+            "text_loss_ratio": txt_loss.item() / (loss.item()) if is_loss_positive else 0.0,
+            "action_loss_ratio": (self.diffusion_loss_coeff * action_loss.item()) / loss.item()
+            if is_loss_positive
+            else 0.0,
+            "ave_text_loss_weight": valid_loss_mask[valid_loss_mask > 0].mean().item(),
         }
         return loss, info
 
@@ -323,7 +329,7 @@ class SNVLAPolicy(PI05Policy):
 
         state_str = self._discretize_state(state)
 
-        prompt = make_prefix_prompt(task, self._previous_narrations, state_str)
+        prompt = make_prefix_prompt(task, self._previous_narrations, state_str, self.tokenizer.bos_token)
 
         token_data = self.tokenizer(
             prompt,
@@ -331,6 +337,7 @@ class SNVLAPolicy(PI05Policy):
             truncation=True,
             padding="max_length",
             max_length=self.config.tokenizer_max_length,
+            padding_side="right",
         )
         return {
             "input_ids": token_data["input_ids"].to(self.model.device),

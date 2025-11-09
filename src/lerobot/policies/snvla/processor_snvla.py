@@ -38,13 +38,19 @@ from .configuration_snvla import SNVLAConfig
 TASK_KEY = "task"
 
 
-def make_prefix_prompt(task: str, previous_narrations: list[str], state_str: str) -> str:
+def make_prefix_prompt(
+    task: str,
+    previous_narrations: list[str],
+    state_str: str,
+    bos_token_str: str,
+    session_separator: str = "\n\n",
+) -> str:
     """Constructs the prefix prompt for SN-VLA."""
     narration_history = "\n".join(s.strip() for s in previous_narrations)
     if narration_history:
-        narration_history = f"History: {narration_history}\n"
+        narration_history = f"History: {narration_history}{session_separator}"
 
-    prefix_str = f"Task: {task.strip()}\n{narration_history}State: {state_str};\nNext: "
+    prefix_str = f"{bos_token_str}Task: {task.strip()}{session_separator}{narration_history}State: {state_str};{session_separator}Next: "
     return prefix_str
 
 
@@ -126,7 +132,7 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
                 previous_narrations = []
 
             # プレフィックス: コンテキスト
-            prefix_str = make_prefix_prompt(task, previous_narrations, state_str)
+            prefix_str = make_prefix_prompt(task, previous_narrations, state_str, self.tokenizer.bos_token)
 
             # サフィックス: 予測ターゲット
             current_narration_clean = current_narration.strip() if isinstance(current_narration, str) else ""
@@ -166,7 +172,7 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
                 # 実況生成モード: 実況トークンに重みを適用
                 suffix_loss_mask = [self.config.narration_loss_weight] * len(suffix_data["input_ids"])
             else:
-                # 行動生成モード: BOAトークンには損失を計算しない
+                # 行動生成モード
                 suffix_loss_mask = [1.0] * len(suffix_data["input_ids"])
 
             token_loss_mask = prefix_loss_mask + suffix_loss_mask
