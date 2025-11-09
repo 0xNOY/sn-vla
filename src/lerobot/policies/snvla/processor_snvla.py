@@ -197,7 +197,7 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
         obs[OBS_LANGUAGE_TOKENS] = torch.tensor(all_input_ids, dtype=torch.long)
         obs[OBS_LANGUAGE_ATTENTION_MASK] = torch.tensor(all_attention_masks, dtype=torch.bool)
         obs[OBS_LANGUAGE_TOKEN_AR_MASK] = torch.tensor(all_ar_masks, dtype=torch.bool)
-        obs[OBS_LANGUAGE_TOKEN_LOSS_MASK] = torch.tensor(all_loss_masks, dtype=torch.bool)
+        obs[OBS_LANGUAGE_TOKEN_LOSS_MASK] = torch.tensor(all_loss_masks, dtype=torch.float32)
 
         transition[TransitionKey.OBSERVATION] = obs
         return transition
