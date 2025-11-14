@@ -1,4 +1,5 @@
 import logging
+import math
 from typing import Any
 
 import numpy as np
@@ -284,10 +285,6 @@ class SNVLAPolicy(PI05Policy):
 
         self.tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_name)
 
-        # 正規化統計を保存（推論時に使用）
-        self.observation_stats = None
-        self.action_stats = None
-
         if config.gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
 
@@ -311,7 +308,6 @@ class SNVLAPolicy(PI05Policy):
         super().reset()  # `_action_queue` を初期化
 
         self._previous_narrations = []
-        self._kv_cache = None
 
     def _discretize_state(self, state: torch.Tensor) -> str:
         state = pad_vector(state, self.config.max_state_dim)
@@ -404,6 +400,7 @@ class SNVLAPolicy(PI05Policy):
         """Performs a single autoregressive decoding step for narration generation."""
 
         token_embedding = self.model.paligemma_with_expert.paligemma.language_model.embed_tokens(token)
+        token_embedding = token_embedding * math.sqrt(token_embedding.shape[-1])
 
         (last_pre_logit, _), new_kv_cache = self.model.paligemma_with_expert.forward(
             attention_mask=None,
@@ -433,6 +430,7 @@ class SNVLAPolicy(PI05Policy):
             (bsize, 1), self.config.begin_of_action_token_id, dtype=torch.long, device=device
         )
         action_emb = self.model.paligemma_with_expert.paligemma.language_model.embed_tokens(action_token)
+        action_emb = action_emb * math.sqrt(action_emb.shape[-1])
 
         (_, _), act_kv_cache = self.model.paligemma_with_expert.forward(
             attention_mask=None,
@@ -483,16 +481,6 @@ class SNVLAPolicy(PI05Policy):
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions_unpadded = actions[:, : self.config.n_action_steps, :original_action_dim]
 
-        # アクションを逆正規化（推論時にプロセッサーをバイパスするため）
-        if self.action_stats is not None and "mean" in self.action_stats and "std" in self.action_stats:
-            mean = self.action_stats["mean"].to(actions_unpadded.device)
-            std = self.action_stats["std"].to(actions_unpadded.device)
-            # 元のアクション次元に合わせて統計をスライス
-            mean = mean[:original_action_dim]
-            std = std[:original_action_dim]
-            actions_unpadded = actions_unpadded * std + mean
-            logging.debug("Applied denormalization to actions in _act")
-
         self._action_queue.extend(actions_unpadded.transpose(0, 1))
 
     @torch.no_grad()
@@ -504,17 +492,6 @@ class SNVLAPolicy(PI05Policy):
         if len(self._action_queue) > 0:
             return self._action_queue.popleft()
 
-        # 状態を正規化（推論時にプロセッサーをバイパスするため）
-        if self.observation_stats is not None and OBS_STATE in batch:
-            state = batch[OBS_STATE]
-            if OBS_STATE in self.observation_stats:
-                stats = self.observation_stats[OBS_STATE]
-                if "mean" in stats and "std" in stats:
-                    mean = stats["mean"].to(state.device)
-                    std = stats["std"].to(state.device)
-                    batch[OBS_STATE] = (state - mean) / (std + 1e-8)
-                    logging.debug("Applied normalization to state in select_action")
-
         # 観測の準備
         images, img_masks = self._preprocess_images(batch)
 
@@ -523,11 +500,7 @@ class SNVLAPolicy(PI05Policy):
         tokens = token_data["input_ids"]
         masks = token_data["attention_mask"]
 
-        if self._kv_cache is None:
-            logits, self._kv_cache, prefix_pad_masks = self._prefill(images, img_masks, tokens, masks)
-        else:
-            logging.warning("Reusing KV cache without reset it. This should not happen in normal flow.")
-            logits, self._kv_cache, prefix_pad_masks = self._prefill(images, img_masks, tokens, masks)
+        logits, kv_cache, prefix_pad_masks = self._prefill(images, img_masks, tokens, masks)
 
         # モード決定
         mode = self._decide_mode(logits)
@@ -541,7 +514,7 @@ class SNVLAPolicy(PI05Policy):
             generated_tokens = []
             for _step in range(self.config.max_narration_length):
                 # KVキャッシュを更新しながら1ステップデコード
-                new_token, logits, self._kv_cache = self._narrate_step(current_token, self._kv_cache)
+                new_token, logits, kv_cache = self._narrate_step(current_token, kv_cache)
                 narration_pad = torch.ones(
                     prefix_pad_masks.shape[0],
                     1,
@@ -566,10 +539,7 @@ class SNVLAPolicy(PI05Policy):
 
         # 行動生成
         bsize = images[0].shape[0]
-        self._act(self._kv_cache, prefix_pad_masks, bsize)
-
-        # KVキャッシュリセット
-        self._kv_cache = None
+        self._act(kv_cache, prefix_pad_masks, bsize)
 
         return self._action_queue.popleft()
 
@@ -601,74 +571,5 @@ class SNVLAPolicy(PI05Policy):
 
     @classmethod
     def from_pretrained(cls, pretrained_name_or_path, **kwargs):
-        """
-        Load pretrained model and extract normalization statistics from the preprocessor.
-
-        This override ensures that normalization stats are loaded for inference,
-        since SNVLA bypasses the preprocessor pipeline during select_action.
-        """
-        # 親クラスのfrom_pretrainedを呼び出してモデルを読み込む
-        model = super().from_pretrained(pretrained_name_or_path, **kwargs)
-
-        # プリプロセッサーから正規化統計を抽出
-        try:
-            import json
-            from pathlib import Path
-
-            from huggingface_hub import hf_hub_download
-            from safetensors.torch import load_file
-
-            # プリプロセッサーを読み込む
-            if isinstance(pretrained_name_or_path, (str, Path)):
-                try:
-                    # プリプロセッサー設定を読み込んで normalizer_processor ステップを探す
-                    config_path = hf_hub_download(
-                        repo_id=str(pretrained_name_or_path),
-                        filename="policy_preprocessor.json",
-                    )
-                    with open(config_path) as f:
-                        preprocessor_config = json.load(f)
-
-                    # normalizer_processor ステップを探す
-                    normalizer_step = None
-                    for step in preprocessor_config.get("steps", []):
-                        if step.get("registry_name") == "normalizer_processor":
-                            normalizer_step = step
-                            break
-
-                    if normalizer_step and "state_file" in normalizer_step:
-                        # 統計ファイルを直接読み込む
-                        stats_path = hf_hub_download(
-                            repo_id=str(pretrained_name_or_path),
-                            filename=normalizer_step["state_file"],
-                        )
-                        stats = load_file(stats_path)
-
-                        # 観測状態の統計
-                        if "observation.state.mean" in stats and "observation.state.std" in stats:
-                            model.observation_stats = {
-                                OBS_STATE: {
-                                    "mean": stats["observation.state.mean"],
-                                    "std": stats["observation.state.std"],
-                                }
-                            }
-                            logging.info("Loaded observation normalization stats from preprocessor")
-
-                        # アクションの統計
-                        if "action.mean" in stats and "action.std" in stats:
-                            model.action_stats = {
-                                "mean": stats["action.mean"],
-                                "std": stats["action.std"],
-                            }
-                            logging.info("Loaded action normalization stats from preprocessor")
-                    else:
-                        logging.warning("Could not find normalizer_processor step in preprocessor config")
-
-                except Exception as e:
-                    logging.warning(f"Could not load preprocessor stats: {e}")
-        except ImportError as e:
-            logging.warning(f"Could not import required modules for loading normalization stats: {e}")
-        except Exception as e:
-            logging.warning(f"Unexpected error while loading normalization stats: {e}")
-
-        return model
+        """Load pretrained model and extract normalization statistics from the preprocessor."""
+        return super().from_pretrained(pretrained_name_or_path, **kwargs)
