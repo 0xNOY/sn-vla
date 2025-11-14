@@ -77,6 +77,9 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
         )
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        if not self.config.training:
+            return transition
+
         transition = transition.copy()
 
         state = transition.get(TransitionKey.OBSERVATION, {}).get(OBS_STATE)
@@ -214,6 +217,9 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
         """
         This step adds the custom mask features.
         """
+        if not self.config.training:
+            return features
+
         # (OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK はTokenizerProcessorStepと互換)
         max_len = self.config.tokenizer_max_length
         features["observation"][OBS_LANGUAGE_TOKEN_AR_MASK] = PolicyFeature(

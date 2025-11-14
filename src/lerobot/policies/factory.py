@@ -214,13 +214,8 @@ def make_pre_post_processors(
             policy configuration type.
     """
     if pretrained_path:
-        # Special handling for policies that need custom processors even when loading from pretrained
-        # SNVLA: Always create new processors since it has custom tokenization different from PI05
-        if isinstance(policy_cfg, SNVLAConfig):
-            # Don't load pretrained processors for SNVLA - create new ones instead
-            pretrained_path = None
         # TODO(Steven): Temporary patch, implement correctly the processors for Gr00t
-        elif isinstance(policy_cfg, GrootConfig):
+        if isinstance(policy_cfg, GrootConfig):
             # GROOT handles normalization in groot_pack_inputs_v3 step
             # Need to override both stats AND normalize_min_max since saved config might be empty
             preprocessor_overrides = {}
@@ -240,7 +235,6 @@ def make_pre_post_processors(
             kwargs["preprocessor_overrides"] = preprocessor_overrides
             kwargs["postprocessor_overrides"] = postprocessor_overrides
 
-    if pretrained_path:
         return (
             PolicyProcessorPipeline.from_pretrained(
                 pretrained_model_name_or_path=pretrained_path,

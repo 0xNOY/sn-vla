@@ -15,6 +15,8 @@ PALIGEMMA_SPECIAL_TOKEN_IDS = {
 class SNVLAConfig(PI05Config):
     """Configuration class for the SN-VLA (Self-Narrating Vision-Language-Action) model."""
 
+    training: bool = True  # Whether the model is in training mode
+
     # --- Tokenizer and Special Tokens ---
     tokenizer_name: str = "google/paligemma-3b-pt-224"
 
