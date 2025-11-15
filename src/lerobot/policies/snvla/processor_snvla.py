@@ -134,49 +134,49 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
             else:
                 previous_narrations = []
 
-            # プレフィックス: コンテキスト
-            prefix_str = make_prefix_prompt(task, previous_narrations, state_str, self.tokenizer.bos_token)
+            # コンテキスト
+            context_str = make_prefix_prompt(task, previous_narrations, state_str, self.tokenizer.bos_token)
 
-            # サフィックス: 予測ターゲット
+            # 予測ターゲット
             current_narration_clean = current_narration.strip() if isinstance(current_narration, str) else ""
 
             if current_narration_clean:
                 # ナレーション生成モード
-                suffix_str = (
+                target_str = (
                     f"{self.begin_of_narration_token}{current_narration_clean}{self.tokenizer.eos_token}"
                 )
             else:
                 # 行動生成モード
-                suffix_str = f"{self.begin_of_action_token}"
+                target_str = f"{self.begin_of_action_token}"
 
-            prefix_data = self.tokenizer(
-                prefix_str,
+            context_tokens = self.tokenizer(
+                context_str,
                 add_special_tokens=False,
                 return_attention_mask=True,
                 truncation=False,  # 最大長は後で全体に適用
             )
-            suffix_data = self.tokenizer(
-                suffix_str,
+            target_tokens = self.tokenizer(
+                target_str,
                 add_special_tokens=False,
                 return_attention_mask=True,
                 truncation=False,
             )
 
-            input_ids = prefix_data["input_ids"] + suffix_data["input_ids"]
-            attention_mask = prefix_data["attention_mask"] + suffix_data["attention_mask"]
+            input_ids = context_tokens["input_ids"] + target_tokens["input_ids"]
+            attention_mask = context_tokens["attention_mask"] + target_tokens["attention_mask"]
 
-            # ARマスクを作成: プレフィックス(0)は相互参照可, サフィックス(1)は自己回帰
-            token_ar_mask = [0] * len(prefix_data["input_ids"]) + [1] * len(suffix_data["input_ids"])
+            # ARマスクを作成: コンテキスト(0)は相互参照可, 予測ターゲット(1)は自己回帰
+            token_ar_mask = [0] * len(context_tokens["input_ids"]) + [1] * len(target_tokens["input_ids"])
 
-            # 損失マスクを作成: サフィックス部分のみでテキスト損失を計算
+            # 損失マスクを作成: 予測ターゲット部分のみでテキスト損失を計算
             # 実況がある場合は設定された重みを適用
-            prefix_loss_mask = [0.0] * len(prefix_data["input_ids"])
+            prefix_loss_mask = [0.0] * len(context_tokens["input_ids"])
             if current_narration_clean:
                 # 実況生成モード: 実況トークンに重みを適用
-                suffix_loss_mask = [self.config.narration_loss_weight] * len(suffix_data["input_ids"])
+                suffix_loss_mask = [self.config.narration_loss_weight] * len(target_tokens["input_ids"])
             else:
                 # 行動生成モード
-                suffix_loss_mask = [1.0] * len(suffix_data["input_ids"])
+                suffix_loss_mask = [1.0] * len(target_tokens["input_ids"])
 
             token_loss_mask = prefix_loss_mask + suffix_loss_mask
 
