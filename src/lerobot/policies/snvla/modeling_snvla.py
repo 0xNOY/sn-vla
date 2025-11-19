@@ -535,12 +535,11 @@ class SNVLAPolicy(PI05Policy):
         current_pos_id = current_pos_id.view(-1, 1)
 
         # モード決定
-        mode = self._decide_mode(logits)
-        current_token = mode
+        current_token = self._decide_mode(logits)
         prefix_pad_masks = prefix_pad_masks.clone()
 
         # 実況ループ
-        while mode.item() == self.config.begin_of_narration_token_id:
+        if current_token.item() == self.config.begin_of_narration_token_id:
             logging.info("SN-VLA starting narration generation...")
 
             generated_tokens = []
@@ -566,10 +565,6 @@ class SNVLAPolicy(PI05Policy):
             new_narration = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
             self._previous_narrations.append(new_narration)
             logging.info(f"SN-VLA Narrated: {new_narration}")
-
-            # 次のモードを決定
-            mode = self._decide_mode(logits)
-            current_token = mode
 
         # 行動生成
         bsize = images[0].shape[0]

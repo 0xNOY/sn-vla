@@ -57,9 +57,11 @@ def make_prefix_prompt(
     """Constructs the prefix prompt for SN-VLA."""
     narration_history = "\n".join(s.strip() for s in previous_narrations)
     if narration_history:
-        narration_history = f"History: {narration_history}{session_separator}"
+        narration_history = f"{session_separator}History: {narration_history};{session_separator}"
+    else:
+        narration_history = f";{session_separator}"
 
-    prefix_str = f"{bos_token_str}Task: {task.strip()}{session_separator}{narration_history}State: {state_str};{session_separator}Next: "
+    prefix_str = f"{bos_token_str}Task: {task.strip()}{session_separator}State: {state_str}{narration_history}Next: "
     return prefix_str
 
 
@@ -149,7 +151,7 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
             if current_narration_clean:
                 # ナレーション生成モード
                 target_str = (
-                    f"{self.begin_of_narration_token}{current_narration_clean}{self.tokenizer.eos_token}"
+                    f"{self.begin_of_narration_token}{current_narration_clean}{self.tokenizer.eos_token}{self.begin_of_action_token}"
                 )
             else:
                 # 行動生成モード
