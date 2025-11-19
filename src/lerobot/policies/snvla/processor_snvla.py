@@ -7,6 +7,7 @@ import torch
 from transformers import AutoTokenizer
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.policies.pi05.modeling_pi05 import pad_vector
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -38,6 +39,14 @@ from .configuration_snvla import SNVLAConfig
 TASK_KEY = "task"
 
 
+def discretize_state(state: torch.Tensor, max_dim: int, num_bins: int = 256) -> torch.Tensor:
+    """Discretizes the continuous state into bins."""
+    state = pad_vector(state, max_dim)
+    state_np = state.cpu().numpy()
+    discretized = np.digitize(state_np, bins=np.linspace(-1, 1, num_bins + 1)[:-1]) - 1
+    return torch.from_numpy(discretized).to(state.device)
+
+
 def make_prefix_prompt(
     task: str,
     previous_narrations: list[str],
@@ -61,8 +70,6 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
 
     config: SNVLAConfig
     tokenizer: Any = field(init=False)
-
-    max_state_dim: int = 32
 
     task_key: str = TASK_KEY
 
@@ -103,8 +110,7 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
             previous_narrations_list = [""] * state.shape[0]
 
         # Discretize states for the entire batch
-        state_np = state.cpu().numpy()
-        discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
+        discretized_states = discretize_state(state, max_dim=self.config.max_state_dim)
 
         # Process each item in the batch
         all_input_ids = []
@@ -180,21 +186,25 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
 
             token_loss_mask = prefix_loss_mask + suffix_loss_mask
 
+            # Pad to max_length
             max_len = self.config.tokenizer_max_length
-            pad_len = max_len - len(input_ids)
+            current_len = len(input_ids)
 
-            if pad_len < 0:
-                # トークンが長すぎる場合は切り捨て
+            if current_len > max_len:
+                # Truncate if too long (keep from end usually, but here maybe just truncate end?)
+                # For VLM, usually we want to keep the image tokens (not here) and the prompt.
+                # Let's just truncate from the end for now.
                 input_ids = input_ids[:max_len]
                 attention_mask = attention_mask[:max_len]
                 token_ar_mask = token_ar_mask[:max_len]
                 token_loss_mask = token_loss_mask[:max_len]
-            else:
-                # パディング
-                input_ids += [self.tokenizer.pad_token_id] * pad_len
-                attention_mask += [0] * pad_len
-                token_ar_mask += [0] * pad_len
-                token_loss_mask += [0] * pad_len
+            elif current_len < max_len:
+                # Pad
+                pad_len = max_len - current_len
+                input_ids = input_ids + [self.tokenizer.pad_token_id] * pad_len
+                attention_mask = attention_mask + [0] * pad_len
+                token_ar_mask = token_ar_mask + [0] * pad_len  # 0 for padding
+                token_loss_mask = token_loss_mask + [0.0] * pad_len
 
             all_input_ids.append(input_ids)
             all_attention_masks.append(attention_mask)

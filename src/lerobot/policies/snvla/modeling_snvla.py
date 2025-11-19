@@ -29,6 +29,7 @@ from .processor_snvla import (
     OBS_LANGUAGE_TOKEN_LOSS_MASK,
     TASK_KEY,
     make_prefix_prompt,
+    discretize_state,
 )
 
 
@@ -309,21 +310,12 @@ class SNVLAPolicy(PI05Policy):
 
         self._previous_narrations = []
 
-    def _discretize_state(self, state: torch.Tensor) -> str:
-        state = pad_vector(state, self.config.max_state_dim)
-        # 注意: select_action内で状態は既に正規化されている必要がある
-        # 正規化された状態（-1 ~ 1の範囲）を256個のビンに離散化
-        state_np = state.cpu().numpy()
-        discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
-        # (B, D) -> B個の文字列。推論はB=1を仮定
-        return " ".join(map(str, discretized_states[0]))
-
     def _build_prompt_and_tokenize(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         # 初期指示はバッチから取得 (B=1を仮定 for inference)
         task = batch[TASK_KEY][0]
         state = batch[OBS_STATE]
 
-        state_str = self._discretize_state(state)
+        state_str = discretize_state(state, self.config.max_state_dim)
 
         prompt = make_prefix_prompt(task, self._previous_narrations, state_str, self.tokenizer.bos_token)
 
@@ -341,7 +333,7 @@ class SNVLAPolicy(PI05Policy):
         }
 
     @torch.no_grad()
-    def _prefill(self, images, img_masks, tokens, masks) -> tuple[Tensor, Any, Tensor]:
+    def _prefill(self, images, img_masks, tokens, masks) -> tuple[Tensor, Any, Tensor, Tensor]:
         """Runs the prefix (images + text history) to get KV cache and next-token logits."""
         # Embed prefix
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.model.embed_prefix(
@@ -371,7 +363,7 @@ class SNVLAPolicy(PI05Policy):
             1
         )  # (B, 1, V)
 
-        return eop_logits, kv_cache, prefix_pad_masks.clone()
+        return eop_logits, kv_cache, prefix_pad_masks.clone(), last_token_idx
 
     def _decide_mode(self, logits: Tensor) -> Tensor:
         """Decide the next mode (action or narration) from output logits."""
@@ -395,16 +387,37 @@ class SNVLAPolicy(PI05Policy):
 
     @torch.no_grad()
     def _narrate_step(
-        self, token: Tensor, kv_cache: tuple[tuple[Tensor]] | None
-    ) -> tuple[Tensor, Tensor, Any]:
+        self,
+        token: Tensor,
+        kv_cache: tuple[tuple[Tensor]] | None,
+        prefix_pad_masks: Tensor,
+        current_pos_id: Tensor,
+    ) -> tuple[Tensor, Tensor, Any, Tensor]:
         """Performs a single autoregressive decoding step for narration generation."""
 
         token_embedding = self.model.paligemma_with_expert.paligemma.language_model.embed_tokens(token)
         token_embedding = token_embedding * math.sqrt(token_embedding.shape[-1])
 
+        # Create attention mask for the current step
+        attention_mask = torch.cat(
+            [
+                prefix_pad_masks,
+                torch.ones(
+                    prefix_pad_masks.shape[0],
+                    1,
+                    dtype=prefix_pad_masks.dtype,
+                    device=prefix_pad_masks.device,
+                ),
+            ],
+            dim=1,
+        )
+
+        # Calculate position_ids for the new token
+        position_ids = current_pos_id + 1
+
         (last_pre_logit, _), new_kv_cache = self.model.paligemma_with_expert.forward(
-            attention_mask=None,
-            position_ids=None,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
             past_key_values=kv_cache,
             inputs_embeds=[token_embedding, None],
             use_cache=True,
@@ -418,10 +431,10 @@ class SNVLAPolicy(PI05Policy):
         else:
             new_token = torch.argmax(new_logits, dim=-1)
 
-        return new_token.view(-1, 1), new_logits, new_kv_cache
+        return new_token.view(-1, 1), new_logits, new_kv_cache, position_ids
 
     @torch.no_grad()
-    def _act(self, kv_cache: Any, prefix_pad_masks: Tensor, bsize: int):
+    def _act(self, kv_cache: Any, prefix_pad_masks: Tensor, bsize: int, current_pos_id: Tensor):
         """Generates an action chunk using the diffusion model."""
 
         # `BEGIN_OF_ACTION` トークンをフォワード
@@ -432,9 +445,26 @@ class SNVLAPolicy(PI05Policy):
         action_emb = self.model.paligemma_with_expert.paligemma.language_model.embed_tokens(action_token)
         action_emb = action_emb * math.sqrt(action_emb.shape[-1])
 
+        # Create attention mask for the BOA token
+        attention_mask = torch.cat(
+            [
+                prefix_pad_masks,
+                torch.ones(
+                    prefix_pad_masks.shape[0],
+                    1,
+                    dtype=prefix_pad_masks.dtype,
+                    device=prefix_pad_masks.device,
+                ),
+            ],
+            dim=1,
+        )
+
+        # Calculate position_ids for the BOA token
+        position_ids = current_pos_id + 1
+
         (_, _), act_kv_cache = self.model.paligemma_with_expert.forward(
-            attention_mask=None,
-            position_ids=None,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
             past_key_values=kv_cache,
             inputs_embeds=[action_emb, None],
             use_cache=True,
@@ -500,7 +530,9 @@ class SNVLAPolicy(PI05Policy):
         tokens = token_data["input_ids"]
         masks = token_data["attention_mask"]
 
-        logits, kv_cache, prefix_pad_masks = self._prefill(images, img_masks, tokens, masks)
+        logits, kv_cache, prefix_pad_masks, current_pos_id = self._prefill(images, img_masks, tokens, masks)
+        # current_pos_id is (B,), make it (B, 1)
+        current_pos_id = current_pos_id.view(-1, 1)
 
         # モード決定
         mode = self._decide_mode(logits)
@@ -514,7 +546,9 @@ class SNVLAPolicy(PI05Policy):
             generated_tokens = []
             for _step in range(self.config.max_narration_length):
                 # KVキャッシュを更新しながら1ステップデコード
-                new_token, logits, kv_cache = self._narrate_step(current_token, kv_cache)
+                new_token, logits, kv_cache, current_pos_id = self._narrate_step(
+                    current_token, kv_cache, prefix_pad_masks, current_pos_id
+                )
                 narration_pad = torch.ones(
                     prefix_pad_masks.shape[0],
                     1,
@@ -539,7 +573,7 @@ class SNVLAPolicy(PI05Policy):
 
         # 行動生成
         bsize = images[0].shape[0]
-        self._act(kv_cache, prefix_pad_masks, bsize)
+        self._act(kv_cache, prefix_pad_masks, bsize, current_pos_id)
 
         return self._action_queue.popleft()
 
