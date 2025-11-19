@@ -44,7 +44,7 @@ def discretize_state(state: torch.Tensor, max_dim: int, num_bins: int = 256) -> 
     state = pad_vector(state, max_dim)
     state_np = state.cpu().numpy()
     discretized = np.digitize(state_np, bins=np.linspace(-1, 1, num_bins + 1)[:-1]) - 1
-    return torch.from_numpy(discretized).to(state.device)
+    return discretized
 
 
 def make_prefix_prompt(
@@ -150,9 +150,7 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
 
             if current_narration_clean:
                 # ナレーション生成モード
-                target_str = (
-                    f"{self.begin_of_narration_token}{current_narration_clean}{self.tokenizer.eos_token}{self.begin_of_action_token}"
-                )
+                target_str = f"{self.begin_of_narration_token}{current_narration_clean}{self.tokenizer.eos_token}{self.begin_of_action_token}"
             else:
                 # 行動生成モード
                 target_str = f"{self.begin_of_action_token}"

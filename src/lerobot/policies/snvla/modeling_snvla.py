@@ -315,7 +315,7 @@ class SNVLAPolicy(PI05Policy):
         task = batch[TASK_KEY][0]
         state = batch[OBS_STATE]
 
-        state_str = discretize_state(state, self.config.max_state_dim)
+        state_str = " ".join(map(str, discretize_state(state, self.config.max_state_dim)[0]))
 
         prompt = make_prefix_prompt(task, self._previous_narrations, state_str, self.tokenizer.bos_token)
 
@@ -326,6 +326,7 @@ class SNVLAPolicy(PI05Policy):
             padding="max_length",
             max_length=self.config.tokenizer_max_length,
             padding_side="right",
+            add_special_tokens=False,
         )
         return {
             "input_ids": token_data["input_ids"].to(self.model.device),
