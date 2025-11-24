@@ -186,30 +186,26 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
 
             token_loss_mask = prefix_loss_mask + suffix_loss_mask
 
-            # Pad to max_length
-            max_len = self.config.tokenizer_max_length
-            current_len = len(input_ids)
-
-            if current_len > max_len:
-                # Truncate if too long (keep from end usually, but here maybe just truncate end?)
-                # For VLM, usually we want to keep the image tokens (not here) and the prompt.
-                # Let's just truncate from the end for now.
-                input_ids = input_ids[:max_len]
-                attention_mask = attention_mask[:max_len]
-                token_ar_mask = token_ar_mask[:max_len]
-                token_loss_mask = token_loss_mask[:max_len]
-            elif current_len < max_len:
-                # Pad
-                pad_len = max_len - current_len
-                input_ids = input_ids + [self.tokenizer.pad_token_id] * pad_len
-                attention_mask = attention_mask + [0] * pad_len
-                token_ar_mask = token_ar_mask + [0] * pad_len  # 0 for padding
-                token_loss_mask = token_loss_mask + [0.0] * pad_len
-
             all_input_ids.append(input_ids)
             all_attention_masks.append(attention_mask)
             all_ar_masks.append(token_ar_mask)
             all_loss_masks.append(token_loss_mask)
+
+        # Pad sequences to the maximum length in the batch
+        lengths = [len(ids) for ids in all_input_ids]
+        max_length = min(max(lengths), self.config.tokenizer_max_length)
+        for i in range(batch_size):
+            all_input_ids[i] = all_input_ids[i][:max_length]
+            all_attention_masks[i] = all_attention_masks[i][:max_length]
+            all_ar_masks[i] = all_ar_masks[i][:max_length]
+            all_loss_masks[i] = all_loss_masks[i][:max_length]
+
+            pad_length = max_length - len(all_input_ids[i])
+            if pad_length > 0:
+                all_input_ids[i] += [self.tokenizer.pad_token_id] * pad_length
+                all_attention_masks[i] += [0] * pad_length
+                all_ar_masks[i] += [0] * pad_length
+                all_loss_masks[i] += [0.0] * pad_length
 
         # Convert to tensors and stack
         obs = transition.get(TransitionKey.OBSERVATION, {})
