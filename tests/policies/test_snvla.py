@@ -56,12 +56,12 @@ def test_config():
 def dummy_transition(test_config: SNVLAConfig) -> EnvTransition:
     """プロセッサテスト用のダミーEnvTransitionを作成します。"""
     transition = EnvTransition()
-    transition[TransitionKey.OBSERVATION] = {OBS_STATE: torch.rand(test_config.max_state_dim)}
-    transition[TransitionKey.ACTION] = torch.rand(test_config.max_action_dim)
+    transition[TransitionKey.OBSERVATION] = {OBS_STATE: torch.rand(1, test_config.max_state_dim)}
+    transition[TransitionKey.ACTION] = torch.rand(1, test_config.max_action_dim)
     transition[TransitionKey.COMPLEMENTARY_DATA] = {
-        TASK_KEY: "pick up the red block",
-        CURRENT_NARRATION: "approaching the block",
-        PREVIOUS_NARRATIONS: ["first, I see a block", "now I will move my arm"],
+        TASK_KEY: ["pick up the red block"],
+        CURRENT_NARRATION: ["approaching the block"],
+        PREVIOUS_NARRATIONS: ["first, I see a block\nnow I will move my arm"],
     }
     return transition
 
@@ -75,6 +75,7 @@ def dummy_inference_batch(test_config: SNVLAConfig) -> dict:
         OBS_IMAGES: torch.rand(batch_size, 3, 224, 224),
         OBS_STATE: torch.rand(batch_size, test_config.max_state_dim),
         COMPLEMENTARY_DATA: {TASK_KEY: ["pick up the red block"]},
+        TASK_KEY: ["pick up the red block"],
     }
 
 
@@ -113,10 +114,10 @@ def test_processor_step(test_config: SNVLAConfig, dummy_transition: EnvTransitio
 
     # 3.2. 出力の形状が正しいことを確認
     max_len = test_config.tokenizer_max_length
-    assert processed_obs[OBS_LANGUAGE_TOKENS].shape == (max_len,), "トークンの形状が不正です"
-    assert processed_obs[OBS_LANGUAGE_ATTENTION_MASK].shape == (max_len,), "Attentionマスクの形状が不正です"
-    assert processed_obs[OBS_LANGUAGE_TOKEN_AR_MASK].shape == (max_len,), "ARマスクの形状が不正です"
-    assert processed_obs[OBS_LANGUAGE_TOKEN_LOSS_MASK].shape == (max_len,), "Lossマスクの形状が不正です"
+    assert processed_obs[OBS_LANGUAGE_TOKENS].shape == (1, max_len), "トークンの形状が不正です"
+    assert processed_obs[OBS_LANGUAGE_ATTENTION_MASK].shape == (1, max_len), "Attentionマスクの形状が不正です"
+    assert processed_obs[OBS_LANGUAGE_TOKEN_AR_MASK].shape == (1, max_len), "ARマスクの形状が不正です"
+    assert processed_obs[OBS_LANGUAGE_TOKEN_LOSS_MASK].shape == (1, max_len), "Lossマスクの形状が不正です"
 
     # 3.3. Lossマスクのロジックが正しいことを確認（プレフィックス部分が0、サフィックス部分が1）
     # このテストケースでは、"Next: <bon>approaching the block<eos>" がサフィックス
