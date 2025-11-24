@@ -411,7 +411,21 @@ def record_loop(
             events["narration_occurred"] = False
             current_narration, previous_narrations_json_str = narration_manager.pop()
             next_narration = narration_manager.get_next_narration()
-            logging.info(f"Inserted narration: {current_narration}")
+            GRAY = "\033[90m"
+            GREEN = "\033[92m"
+            RESET = "\033[0m"
+            print(
+                "="
+                * (
+                    bar_len := max(
+                        len("Inserted narration: ") + len(current_narration),
+                        len("Next narration:     ") + len(next_narration),
+                    )
+                )
+                + f"\n{GRAY}Inserted narration: {current_narration}{RESET}\n"
+                f"{GREEN}Next narration:     {next_narration}\n{RESET}" + "=" * bar_len,
+                flush=True,
+            )
         elif narration_manager.is_enabled():
             current_narration = ""
             previous_narrations_json_str = narration_manager.get_previous_narrations_json_str()
