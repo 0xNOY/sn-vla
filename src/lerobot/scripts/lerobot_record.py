@@ -422,8 +422,8 @@ def record_loop(
                 "="
                 * (
                     bar_len := max(
-                        len("Inserted narration: ") + len(current_narration),
-                        len("Next narration:     ") + len(next_narration),
+                        len("Inserted narration: ") + len(current_narration) if current_narration else 0,
+                        len("Next narration:     ") + len(next_narration) if next_narration else 0,
                     )
                 )
                 + f"\n{GRAY}Inserted narration: {current_narration}{RESET}\n"
