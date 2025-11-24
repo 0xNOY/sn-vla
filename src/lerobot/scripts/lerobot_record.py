@@ -58,6 +58,7 @@ lerobot-record \
 ```
 """
 
+import json
 import logging
 import time
 from dataclasses import asdict, dataclass, field
@@ -224,8 +225,8 @@ class NarrationManager:
         self._next_narration_index += 1
         return narration, previous_narrations_str
 
-    def get_previous_narrations_str(self) -> str:
-        return "\n".join(self._previous_narrations)
+    def get_previous_narrations_json_str(self) -> str:
+        return json.dumps(self._previous_narrations)
 
     def get_next_narration(self) -> str | None:
         if self._next_narration_index >= len(self._narrations):
@@ -408,12 +409,12 @@ def record_loop(
         narration_occurred = events.get("narration_occurred", False)
         if narration_occurred:
             events["narration_occurred"] = False
-            current_narration, previous_narrations_str = narration_manager.pop()
+            current_narration, previous_narrations_json_str = narration_manager.pop()
             next_narration = narration_manager.get_next_narration()
             logging.info(f"Inserted narration: {current_narration}")
         elif narration_manager.is_enabled():
             current_narration = ""
-            previous_narrations_str = narration_manager.get_previous_narrations_str()
+            previous_narrations_json_str = narration_manager.get_previous_narrations_json_str()
             next_narration = narration_manager.get_next_narration()
 
         # Write to dataset
@@ -423,7 +424,7 @@ def record_loop(
 
             # Add narration data if narration manager is enabled
             if narration_manager.is_enabled():
-                frame["previous_narrations"] = previous_narrations_str
+                frame["previous_narrations"] = previous_narrations_json_str
                 frame["current_narration"] = current_narration
 
             dataset.add_frame(frame)
@@ -435,7 +436,7 @@ def record_loop(
             if narration_occurred or (narration_manager.is_enabled() and timestamp == 0):
                 log_rerun_narrations(
                     current_narration=current_narration,
-                    previous_narrations_str=previous_narrations_str,
+                    previous_narrations_str=previous_narrations_json_str,
                     next_narration=next_narration,
                 )
 

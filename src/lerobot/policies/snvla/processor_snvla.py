@@ -1,3 +1,4 @@
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -55,7 +56,7 @@ def make_prefix_prompt(
     session_separator: str = "\n\n",
 ) -> str:
     """Constructs the prefix prompt for SN-VLA."""
-    narration_history = "\n".join(s.strip() for s in previous_narrations)
+    narration_history = "".join(previous_narrations)
     if narration_history:
         narration_history = f"{session_separator}History: {narration_history};{session_separator}"
     else:
@@ -127,7 +128,7 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
             current_narration = (
                 current_narrations[i] if isinstance(current_narrations, list) else current_narrations
             )
-            previous_narrations_str = (
+            previous_narrations_json_str = (
                 previous_narrations_list[i]
                 if isinstance(previous_narrations_list, list)
                 else previous_narrations_list
@@ -137,8 +138,10 @@ class SNVLAPrepareTrainingTokenizerProcessorStep(ProcessorStep):
             state_str = " ".join(map(str, discretized_states[i]))
 
             # Split previous narrations
-            if isinstance(previous_narrations_str, str):
-                previous_narrations = previous_narrations_str.split("\n") if previous_narrations_str else []
+            if isinstance(previous_narrations_json_str, str):
+                previous_narrations = (
+                    json.loads(previous_narrations_json_str) if previous_narrations_json_str else []
+                )
             else:
                 previous_narrations = []
 
