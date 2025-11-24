@@ -333,6 +333,10 @@ def record_loop(
         preprocessor.reset()
         postprocessor.reset()
 
+    # 最初のフレームは自動で実況を挿入
+    if narration_manager.is_enabled():
+        events["narration_occurred"] = True
+
     timestamp = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
