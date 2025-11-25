@@ -17,8 +17,8 @@ class SNVLAConfig(PI05Config):
 
     training: bool = True  # Whether the model is in training mode
 
-    max_state_dim = 6  # for SO-101
-    max_action_dim = 6
+    max_state_dim: int = 6  # for SO-101
+    max_action_dim: int = 6
 
     # --- Tokenizer and Special Tokens ---
     tokenizer_name: str = "google/paligemma-3b-pt-224"
