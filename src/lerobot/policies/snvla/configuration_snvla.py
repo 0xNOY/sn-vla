@@ -36,7 +36,7 @@ class SNVLAConfig(PI05Config):
     diffusion_loss_coeff: float = 1.0
 
     # 実況トークンの損失重み（1.0 = 通常、>1.0 = より重要視）
-    narration_loss_weight: float = 4.0
+    narration_loss_weight: float = 10.0
 
     # --- Overrides from PI05Config ---
     tokenizer_max_length: int = 500
