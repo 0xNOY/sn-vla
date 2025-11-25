@@ -69,6 +69,7 @@ from pathlib import Path
 from pprint import pformat
 from typing import Any
 
+import numpy as np
 import lerobot.policies  # noqa: F401 - Import to register all policy configs
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
@@ -602,6 +603,19 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     async_saver = AsyncEpisodeSaver(dataset, events)
 
+    # Determine the starting episode index
+    if dataset.episode_buffer is None:
+        current_episode_index = dataset.meta.total_episodes
+        dataset.episode_buffer = dataset.create_episode_buffer(episode_index=current_episode_index)
+    else:
+        current_episode_index = dataset.episode_buffer["episode_index"]
+
+    if isinstance(current_episode_index, list):
+        # Should not happen if initialized correctly, but handle just in case
+        current_episode_index = dataset.meta.total_episodes
+    elif isinstance(current_episode_index, np.ndarray):
+        current_episode_index = current_episode_index.item()
+
     with VideoEncodingManager(dataset):
         recorded_episodes = 0
         while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
@@ -653,13 +667,20 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 log_say("Re-record episode", cfg.play_sounds)
                 events["rerecord_episode"] = False
                 events["exit_early"] = False
-                dataset.clear_episode_buffer()
+                # Reset buffer with the SAME episode index
+                dataset.episode_buffer = dataset.create_episode_buffer(episode_index=current_episode_index)
                 continue
 
             episode_data = dataset.episode_buffer
+            # Do not delete images here, they are needed by the async saver
             dataset.clear_episode_buffer(delete_images=False)
             async_saver.save_episode(episode_data)
+
             recorded_episodes += 1
+            current_episode_index += 1
+
+            # Manually create buffer for the NEXT episode index
+            dataset.episode_buffer = dataset.create_episode_buffer(episode_index=current_episode_index)
 
         log_say("Waiting for all data to be saved...", cfg.play_sounds)
         async_saver.stop()
