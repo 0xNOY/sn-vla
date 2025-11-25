@@ -202,9 +202,7 @@ def say(text: str, blocking: bool = False):
         cmd = ["say", text]
 
     elif system == "Linux":
-        cmd = ["spd-say", text]
-        if blocking:
-            cmd.append("--wait")
+        cmd = ["espeak-ng", text]
 
     elif system == "Windows":
         cmd = [

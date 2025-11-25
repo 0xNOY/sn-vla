@@ -60,6 +60,9 @@ lerobot-record \
 
 import json
 import logging
+import queue
+import shutil
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -277,6 +280,49 @@ class NarrationManager:
 """
 
 
+class AsyncEpisodeSaver:
+    def __init__(self, dataset, events):
+        self.dataset = dataset
+        self.events = events
+        self.queue = queue.Queue()
+        self.thread = threading.Thread(target=self._worker)
+        self.thread.daemon = True
+        self.thread.start()
+
+    def save_episode(self, episode_data):
+        self.queue.put(episode_data)
+
+    def _worker(self):
+        while True:
+            episode_data = self.queue.get()
+            if episode_data is None:
+                self.queue.task_done()
+                break
+
+            try:
+                # Capture episode index before it might be modified
+                episode_index = episode_data["episode_index"]
+
+                self.dataset.save_episode(episode_data)
+
+                # Manually clean up images if they were not deleted by video encoding
+                # (i.e. if there are no video keys but there are image keys)
+                if len(self.dataset.meta.video_keys) == 0 and len(self.dataset.meta.image_keys) > 0:
+                    for cam_key in self.dataset.meta.camera_keys:
+                        img_dir = self.dataset._get_image_file_dir(episode_index, cam_key)
+                        if img_dir.is_dir():
+                            shutil.rmtree(img_dir)
+
+            except Exception as e:
+                logging.error(f"Error saving episode: {e}")
+            finally:
+                self.queue.task_done()
+
+    def stop(self):
+        self.queue.put(None)
+        self.thread.join()
+
+
 @safe_stop_image_writer
 def record_loop(
     robot: Robot,
@@ -422,7 +468,7 @@ def record_loop(
                 "="
                 * (
                     bar_len := max(
-                        len("Inserted narration: ") + len(current_narration) if current_narration else 0,
+                        len("Inserted narration: ") + len(current_narration),
                         len("Next narration:     ") + len(next_narration) if next_narration else 0,
                     )
                 )
@@ -430,6 +476,7 @@ def record_loop(
                 f"{GREEN}Next narration:     {next_narration}\n{RESET}" + "=" * bar_len,
                 flush=True,
             )
+            log_say(current_narration)
         elif narration_manager.is_enabled():
             current_narration = ""
             previous_narrations_json_str = narration_manager.get_previous_narrations_json_str()
@@ -553,6 +600,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     listener, events = init_keyboard_listener(custom_events=custom_events)
 
+    async_saver = AsyncEpisodeSaver(dataset, events)
+
     with VideoEncodingManager(dataset):
         recorded_episodes = 0
         while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
@@ -607,8 +656,13 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 dataset.clear_episode_buffer()
                 continue
 
-            dataset.save_episode()
+            episode_data = dataset.episode_buffer
+            dataset.clear_episode_buffer(delete_images=False)
+            async_saver.save_episode(episode_data)
             recorded_episodes += 1
+
+        log_say("Waiting for all data to be saved...", cfg.play_sounds)
+        async_saver.stop()
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
 
