@@ -458,30 +458,33 @@ def record_loop(
         _sent_action = robot.send_action(robot_action_to_send)
 
         narration_occurred = events.get("narration_occurred", False)
-        if narration_occurred:
-            events["narration_occurred"] = False
-            current_narration, previous_narrations_json_str = narration_manager.pop()
-            next_narration = narration_manager.get_next_narration()
-            GRAY = "\033[90m"
-            GREEN = "\033[92m"
-            RESET = "\033[0m"
-            print(
-                "="
-                * (
-                    bar_len := max(
-                        len("Inserted narration: ") + len(current_narration),
-                        len("Next narration:     ") + len(next_narration) if next_narration else 0,
+        if narration_manager.is_enabled():
+            if narration_occurred:
+                events["narration_occurred"] = False
+                current_narration, previous_narrations_json_str = narration_manager.pop()
+                next_narration = narration_manager.get_next_narration()
+                GRAY = "\033[90m"
+                GREEN = "\033[92m"
+                RESET = "\033[0m"
+                print(
+                    "="
+                    * (
+                        bar_len := max(
+                            len("Inserted narration: ") + len(current_narration),
+                            len("Next narration:     ") + len(next_narration) if next_narration else 0,
+                        )
                     )
+                    + f"\n{GRAY}Inserted narration: {current_narration}{RESET}\n"
+                    f"{GREEN}Next narration:     {next_narration}\n{RESET}" + "=" * bar_len,
+                    flush=True,
                 )
-                + f"\n{GRAY}Inserted narration: {current_narration}{RESET}\n"
-                f"{GREEN}Next narration:     {next_narration}\n{RESET}" + "=" * bar_len,
-                flush=True,
-            )
-            log_say(current_narration)
-        elif narration_manager.is_enabled():
-            current_narration = ""
-            previous_narrations_json_str = narration_manager.get_previous_narrations_json_str()
-            next_narration = narration_manager.get_next_narration()
+                log_say(current_narration)
+            else:
+                current_narration = ""
+                previous_narrations_json_str = narration_manager.get_previous_narrations_json_str()
+                next_narration = narration_manager.get_next_narration()
+        else:
+            narration_occurred = False
 
         # Write to dataset
         if dataset is not None:
