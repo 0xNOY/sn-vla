@@ -17,6 +17,9 @@ class SNVLAConfig(PI05Config):
 
     training: bool = True  # Whether the model is in training mode
 
+    max_state_dim = 6  # for SO-101
+    max_action_dim = 6
+
     # --- Tokenizer and Special Tokens ---
     tokenizer_name: str = "google/paligemma-3b-pt-224"
 
@@ -36,7 +39,7 @@ class SNVLAConfig(PI05Config):
     narration_loss_weight: float = 4.0
 
     # --- Overrides from PI05Config ---
-    tokenizer_max_length: int = 300
+    tokenizer_max_length: int = 500
 
     def __post_init__(self):
         super().__post_init__()

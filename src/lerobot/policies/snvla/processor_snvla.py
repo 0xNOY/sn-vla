@@ -57,13 +57,8 @@ def make_prefix_prompt(
 ) -> str:
     """Constructs the prefix prompt for SN-VLA."""
     narration_history = "".join(previous_narrations)
-    if narration_history:
-        narration_history = f"{session_separator}Progress: {narration_history}"
 
-    prefix_str = (
-        f"{bos_token_str}Task: {task.strip()}{session_separator}State: {state_str};{narration_history}"
-    )
-    return prefix_str
+    return f"{bos_token_str}Task: {task.strip()}{session_separator}State: {state_str};{session_separator}Progress: {narration_history}"
 
 
 @ProcessorStepRegistry.register(name="snvla_prepare_training_tokenizer_processor_step")
