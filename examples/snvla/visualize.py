@@ -1,4 +1,5 @@
 import argparse
+import json
 
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
@@ -41,6 +42,13 @@ def extract_episode_data(dataset, episode_idx=0):
                 image = np.clip(image, 0, 1) if image.max() <= 1.0 else np.clip(image / 255.0, 0, 1)
                 camera_frames[key].append(image)
 
+        # previous_narrationsをデシリアライズ
+        previous_narrations = frame.get("previous_narrations", "")
+        try:
+            previous_narrations = "".join(json.loads(previous_narrations))
+        except json.JSONDecodeError:
+            print(repr(previous_narrations))
+
         # ナレーションイベントを記録
         if frame.get("current_narration"):
             narration_events.append(
@@ -48,12 +56,12 @@ def extract_episode_data(dataset, episode_idx=0):
                     "frame": idx - from_idx,
                     "timestamp": timestamp,
                     "narration": frame["current_narration"],
-                    "previous": frame.get("previous_narrations", ""),
+                    "previous": previous_narrations,
                 }
             )
 
         # 各フレームのprevious_narrationsを記録
-        previous_narrations_per_frame.append(frame.get("previous_narrations", ""))
+        previous_narrations_per_frame.append(previous_narrations)
 
         # 状態とアクションを記録
         if "observation.state" in frame:
@@ -63,6 +71,7 @@ def extract_episode_data(dataset, episode_idx=0):
             action_data.append(frame["action"].numpy().flatten())
 
     return {
+        "task": dataset[from_idx].get("task", "N/A"),
         "camera_frames": camera_frames,
         "narration_events": narration_events,
         "previous_narrations_per_frame": previous_narrations_per_frame,
@@ -254,7 +263,8 @@ def visualize_episode_with_narrations(dataset, episode_idx=0, output_path=None, 
 
         # タイトルを更新
         title_text.set_text(
-            f"Episode {episode_idx} - Frame {frame_idx}/{data['num_frames']} (t={current_time:.2f}s)"
+            f"Episode {episode_idx} - Frame {frame_idx}/{data['num_frames']} (t={current_time:.2f}s)\n"
+            f"Task: {data['task']}"
         )
 
         # カメラ画像を更新
@@ -325,7 +335,7 @@ if __name__ == "__main__":
     parser.add_argument("--interval", type=int, default=50, help="Frame interval in milliseconds")
     args = parser.parse_args()
 
-    dataset = LeRobotDataset(args.dataset_name)
+    dataset = LeRobotDataset(args.dataset_name, revision="main")
     visualize_episode_with_narrations(
         dataset, episode_idx=args.episode_idx, output_path=args.output, interval=args.interval
     )
