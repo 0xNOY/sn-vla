@@ -185,7 +185,7 @@ class ProcessorConfigKwargs(TypedDict, total=False):
 
 def make_pre_post_processors(
     policy_cfg: PreTrainedConfig,
-    pretrained_path: str | None = None,
+    pretrained_path: str | None,
     **kwargs: Unpack[ProcessorConfigKwargs],
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
@@ -214,8 +214,52 @@ def make_pre_post_processors(
             policy configuration type.
     """
     if pretrained_path:
+        # Check if we should skip loading from pretrained for SNVLA
+        if isinstance(policy_cfg, SNVLAConfig):
+            # We need to check if the pretrained model is actually SNVLA.
+            # If it is PI05 (or anything else), we should NOT load its processor,
+            # because SNVLA needs a specific processor with tokenizer.
+            # We can check the config.json of the pretrained model.
+            import json
+            from pathlib import Path
+
+            from huggingface_hub import hf_hub_download
+            from huggingface_hub.constants import CONFIG_NAME
+
+            model_id = str(pretrained_path)
+            config_file = None
+
+            if Path(model_id).is_dir():
+                if (Path(model_id) / CONFIG_NAME).exists():
+                    config_file = Path(model_id) / CONFIG_NAME
+            else:
+                try:
+                    config_file = hf_hub_download(
+                        repo_id=model_id,
+                        filename=CONFIG_NAME,
+                    )
+                except Exception:
+                    pass
+
+            if config_file:
+                try:
+                    with open(config_file) as f:
+                        pretrained_config = json.load(f)
+
+                    pretrained_type = pretrained_config.get("type")
+                    # If pretrained type is NOT snvla, we assume we are fine-tuning from a base model (like pi05)
+                    # and we should create a FRESH SNVLA processor.
+                    if pretrained_type != "snvla":
+                        logging.info(
+                            f"Pretrained model type is '{pretrained_type}', but policy type is 'snvla'. "
+                            f"Creating fresh SNVLA processor instead of loading from {pretrained_path}."
+                        )
+                        pretrained_path = None
+                except Exception as e:
+                    logging.warning(f"Failed to check pretrained config type: {e}")
+
         # TODO(Steven): Temporary patch, implement correctly the processors for Gr00t
-        if isinstance(policy_cfg, GrootConfig):
+        if pretrained_path and isinstance(policy_cfg, GrootConfig):
             # GROOT handles normalization in groot_pack_inputs_v3 step
             # Need to override both stats AND normalize_min_max since saved config might be empty
             preprocessor_overrides = {}
@@ -235,26 +279,27 @@ def make_pre_post_processors(
             kwargs["preprocessor_overrides"] = preprocessor_overrides
             kwargs["postprocessor_overrides"] = postprocessor_overrides
 
-        return (
-            PolicyProcessorPipeline.from_pretrained(
-                pretrained_model_name_or_path=pretrained_path,
-                config_filename=kwargs.get(
-                    "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+        if pretrained_path:
+            return (
+                PolicyProcessorPipeline.from_pretrained(
+                    pretrained_model_name_or_path=pretrained_path,
+                    config_filename=kwargs.get(
+                        "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+                    ),
+                    overrides=kwargs.get("preprocessor_overrides", {}),
+                    to_transition=batch_to_transition,
+                    to_output=transition_to_batch,
                 ),
-                overrides=kwargs.get("preprocessor_overrides", {}),
-                to_transition=batch_to_transition,
-                to_output=transition_to_batch,
-            ),
-            PolicyProcessorPipeline.from_pretrained(
-                pretrained_model_name_or_path=pretrained_path,
-                config_filename=kwargs.get(
-                    "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+                PolicyProcessorPipeline.from_pretrained(
+                    pretrained_model_name_or_path=pretrained_path,
+                    config_filename=kwargs.get(
+                        "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+                    ),
+                    overrides=kwargs.get("postprocessor_overrides", {}),
+                    to_transition=policy_action_to_transition,
+                    to_output=transition_to_policy_action,
                 ),
-                overrides=kwargs.get("postprocessor_overrides", {}),
-                to_transition=policy_action_to_transition,
-                to_output=transition_to_policy_action,
-            ),
-        )
+            )
 
     # Create a new processor based on policy type
     if isinstance(policy_cfg, TDMPCConfig):
