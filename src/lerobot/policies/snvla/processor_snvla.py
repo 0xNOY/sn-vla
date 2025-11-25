@@ -259,7 +259,7 @@ def make_snvla_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        SNVLAPrepareTrainingTokenizerProcessorStep(config=config, max_state_dim=config.max_state_dim),
+        SNVLAPrepareTrainingTokenizerProcessorStep(config=config),
         DeviceProcessorStep(device=config.device),
     ]
 
