@@ -89,7 +89,7 @@ class LeRobotDatasetMetadata:
         metadata_buffer_size: int = 10,
     ):
         self.repo_id = repo_id
-        self.revision = revision if revision else CODEBASE_VERSION
+        self.revision = revision if revision else "main"
         self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
         self.writer = None
         self.latest_episode = None
@@ -114,20 +114,42 @@ class LeRobotDatasetMetadata:
             return
 
         combined_dict = {}
+        all_keys = set()
         for episode_dict in self.metadata_buffer:
-            for key, value in episode_dict.items():
-                if key not in combined_dict:
-                    combined_dict[key] = []
-                # Extract value and serialize numpy arrays
-                # because PyArrow's from_pydict function doesn't support numpy arrays
-                val = value[0] if isinstance(value, list) else value
-                combined_dict[key].append(val.tolist() if isinstance(val, np.ndarray) else val)
+            all_keys.update(episode_dict.keys())
+
+        for key in all_keys:
+            combined_dict[key] = []
+
+        for episode_dict in self.metadata_buffer:
+            for key in all_keys:
+                if key in episode_dict:
+                    value = episode_dict[key]
+                    # Extract value and serialize numpy arrays
+                    # because PyArrow's from_pydict function doesn't support numpy arrays
+                    val = value[0] if isinstance(value, list) else value
+                    combined_dict[key].append(val.tolist() if isinstance(val, np.ndarray) else val)
+                else:
+                    combined_dict[key].append(None)
 
         first_ep = self.metadata_buffer[0]
         chunk_idx = first_ep["meta/episodes/chunk_index"][0]
         file_idx = first_ep["meta/episodes/file_index"][0]
 
-        table = pa.Table.from_pydict(combined_dict)
+        if self.writer:
+            # Ensure schema consistency with the existing writer
+            # 1. Backfill missing columns with None
+            for name in self.writer.schema.names:
+                if name not in combined_dict:
+                    combined_dict[name] = [None] * len(self.metadata_buffer)
+
+            # 2. Remove extra columns that are not in the writer's schema
+            # (Parquet files cannot change schema mid-file)
+            keys_to_remove = [key for key in combined_dict if key not in self.writer.schema.names]
+            for key in keys_to_remove:
+                del combined_dict[key]
+
+        table = pa.Table.from_pydict(combined_dict, schema=self.writer.schema if self.writer else None)
 
         if not self.writer:
             path = Path(self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx))
@@ -673,7 +695,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.delta_timestamps = delta_timestamps
         self.episodes = episodes
         self.tolerance_s = tolerance_s
-        self.revision = revision if revision else CODEBASE_VERSION
+        self.revision = revision if revision else "main"
         self.video_backend = video_backend if video_backend else get_safe_default_codec()
         self.delta_indices = None
         self.batch_encoding_size = batch_encoding_size
