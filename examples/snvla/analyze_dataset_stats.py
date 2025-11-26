@@ -127,6 +127,8 @@ def main():
 
     print(f"\n=== Narration Statistics ===")
     print(f"Total Narration Events: {len(all_narrations)}")
+    if dataset.num_frames > 0:
+        print(f"Narration Coverage: {len(all_narrations) / dataset.num_frames * 100:.2f}% of frames")
     print(f"Unique Narrations: {len(narration_counts)}")
     print(
         f"Avg Narrations per Episode: {np.mean(narrations_per_episode):.2f} (std: {np.std(narrations_per_episode):.2f})"
