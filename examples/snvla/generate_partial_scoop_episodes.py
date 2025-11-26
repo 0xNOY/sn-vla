@@ -43,7 +43,6 @@ from lerobot.utils.constants import HF_LEROBOT_HOME
 logger = logging.getLogger(__name__)
 
 # Constants
-SOURCE_TASK = "Put 5 scoops of soybeans into the black bowl."
 TASK_TEMPLATE = "Put {n} scoops of soybeans into the black bowl."
 PUT_INTO_BOWL_NARRATION = " (done)\nPut into the black bowl."
 MAIN_TASK_DONE_NARRATION = " (done)\nMain task done.\n"
@@ -54,12 +53,12 @@ META_SOURCE_EPISODE_INDEX = "augmentation/source_episode_index"
 META_SCOOP_COUNT = "augmentation/scoop_count"
 
 
-def find_5_scoop_episodes(dataset: LeRobotDataset) -> list[int]:
-    """Find all episode indices with the 5-scoop task."""
+def find_source_episodes(dataset: LeRobotDataset, source_task: str) -> list[int]:
+    """Find all episode indices with the source task."""
     episodes = []
     for ep_idx in range(dataset.num_episodes):
         tasks = dataset.meta.episodes[ep_idx].get("tasks", [])
-        if tasks and SOURCE_TASK in tasks:
+        if tasks and source_task in tasks:
             episodes.append(ep_idx)
     return episodes
 
@@ -110,7 +109,7 @@ def filter_generation_plan(
     return filtered
 
 
-def find_cut_points(dataset: LeRobotDataset, episode_idx: int) -> dict[int, int]:
+def find_cut_points(dataset: LeRobotDataset, episode_idx: int, source_scoops: int) -> dict[int, int]:
     """
     Find frame indices where each scoop is completed.
 
@@ -124,7 +123,7 @@ def find_cut_points(dataset: LeRobotDataset, episode_idx: int) -> dict[int, int]
     The last frame's "Scoop" narration will be replaced with "Main task done."
 
     Returns:
-        dict mapping scoop_count (1-4) to the frame index where to cut (exclusive).
+        dict mapping scoop_count (1 to source_scoops-1) to the frame index where to cut (exclusive).
     """
     ep_meta = dataset.meta.episodes[episode_idx]
     from_idx = ep_meta["dataset_from_index"]
@@ -142,7 +141,7 @@ def find_cut_points(dataset: LeRobotDataset, episode_idx: int) -> dict[int, int]
             scoop_count += 1
             # The N-th "Scoop" narration marks the cut point for (N-1) scoops
             # e.g., 2nd "Scoop" = cut point for 1 scoop
-            if scoop_count >= 2 and scoop_count <= 5:
+            if scoop_count >= 2 and scoop_count <= source_scoops:
                 # Include this frame in the cut (exclusive means cut at i+1)
                 cut_points[scoop_count - 1] = i + 1
         prev_narration = narration
@@ -198,6 +197,8 @@ def generate_partial_episode(
 def create_augmented_dataset(
     src_dataset: LeRobotDataset,
     output_repo_id: str,
+    source_scoops: int,
+    target_scoops: list[int],
     output_dir: Path | None = None,
     dry_run: bool = False,
 ) -> LeRobotDataset | None:
@@ -216,18 +217,19 @@ def create_augmented_dataset(
     if output_dir is None:
         output_dir = HF_LEROBOT_HOME / output_repo_id
 
-    # Find 5-scoop episodes
-    five_scoop_episodes = find_5_scoop_episodes(src_dataset)
-    logger.info(f"Found {len(five_scoop_episodes)} episodes with 5-scoop task")
+    # Find source episodes
+    source_task = TASK_TEMPLATE.format(n=source_scoops)
+    source_episodes = find_source_episodes(src_dataset, source_task)
+    logger.info(f"Found {len(source_episodes)} episodes with {source_scoops}-scoop task")
 
-    if not five_scoop_episodes:
-        raise ValueError("No 5-scoop episodes found in source dataset")
+    if not source_episodes:
+        raise ValueError(f"No {source_scoops}-scoop episodes found in source dataset")
 
     # Plan the generation
     generation_plan = []
-    for ep_idx in five_scoop_episodes:
-        cut_points = find_cut_points(src_dataset, ep_idx)
-        for scoop_count in [1, 2, 3, 4]:
+    for ep_idx in source_episodes:
+        cut_points = find_cut_points(src_dataset, ep_idx, source_scoops)
+        for scoop_count in target_scoops:
             if scoop_count in cut_points:
                 generation_plan.append(
                     {
@@ -239,7 +241,7 @@ def create_augmented_dataset(
                 )
 
     logger.info(f"Will generate {len(generation_plan)} new episodes:")
-    for scoop_count in [1, 2, 3, 4]:
+    for scoop_count in target_scoops:
         count = sum(1 for p in generation_plan if p["scoop_count"] == scoop_count)
         logger.info(f"  - {count} episodes for {scoop_count} scoop(s)")
 
@@ -248,9 +250,7 @@ def create_augmented_dataset(
         print(f"Source dataset: {src_dataset.repo_id}")
         print(f"Output dataset: {output_repo_id}")
         print(f"Output directory: {output_dir}")
-        print(
-            f"\nWill generate {len(generation_plan)} episodes from {len(five_scoop_episodes)} source episodes:"
-        )
+        print(f"\nWill generate {len(generation_plan)} episodes from {len(source_episodes)} source episodes:")
 
         for plan in generation_plan[:10]:  # Show first 10
             print(
@@ -277,7 +277,7 @@ def create_augmented_dataset(
     )
 
     # Save tasks
-    all_tasks = [TASK_TEMPLATE.format(n=n) for n in [1, 2, 3, 4]]
+    all_tasks = [TASK_TEMPLATE.format(n=n) for n in target_scoops]
     new_meta.save_episode_tasks(all_tasks)
 
     # Process each episode
@@ -537,6 +537,7 @@ def add_episodes_to_existing_dataset(
     dataset: LeRobotDataset,
     full_dataset: LeRobotDataset,
     generation_plan: list[dict],
+    target_scoops: list[int],
     dry_run: bool = False,
 ) -> LeRobotDataset | None:
     """
@@ -574,7 +575,7 @@ def add_episodes_to_existing_dataset(
     ensure_augmentation_columns_exist(full_dataset)
 
     # Save new tasks if needed
-    all_tasks = [TASK_TEMPLATE.format(n=n) for n in [1, 2, 3, 4]]
+    all_tasks = [TASK_TEMPLATE.format(n=n) for n in target_scoops]
     full_dataset.meta.save_episode_tasks(all_tasks)
 
     # Get starting indices from full dataset
@@ -739,6 +740,18 @@ def main():
         help="Skip creating a backup when modifying existing dataset",
     )
     parser.add_argument(
+        "--source-scoops",
+        type=int,
+        required=True,
+        help="Number of scoops in source episodes",
+    )
+    parser.add_argument(
+        "--target-scoops",
+        type=str,
+        default=None,
+        help="Comma-separated list of target scoop counts (e.g., '1,2,3'). Defaults to range(1, source_scoops).",
+    )
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -746,6 +759,18 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # Parse target scoops
+    if args.target_scoops:
+        try:
+            target_scoops = [int(x.strip()) for x in args.target_scoops.split(",")]
+        except ValueError:
+            raise ValueError("Invalid format for --target-scoops. Expected comma-separated integers.")
+    else:
+        target_scoops = list(range(1, args.source_scoops))
+
+    if not target_scoops:
+        raise ValueError("No target scoop counts specified or implied.")
 
     # Configure logging
     log_level = logging.DEBUG if args.verbose else logging.INFO
@@ -770,12 +795,13 @@ def main():
     if is_in_place_update:
         logger.info("Source and output repos are the same - will add episodes to existing dataset")
 
-        # Find 5-scoop episodes from full metadata
-        five_scoop_episodes = find_5_scoop_episodes(src_dataset_meta)
-        logger.info(f"Found {len(five_scoop_episodes)} episodes with 5-scoop task")
+        # Find source episodes from full metadata
+        source_task = TASK_TEMPLATE.format(n=args.source_scoops)
+        source_episodes = find_source_episodes(src_dataset_meta, source_task)
+        logger.info(f"Found {len(source_episodes)} episodes with {args.source_scoops}-scoop task")
 
-        if not five_scoop_episodes:
-            logger.error("No 5-scoop episodes found in source dataset")
+        if not source_episodes:
+            logger.error(f"No {args.source_scoops}-scoop episodes found in source dataset")
             return
 
         # Check for existing augmented episodes from full metadata
@@ -783,20 +809,20 @@ def main():
         if existing_augmented:
             logger.info(f"Found {len(existing_augmented)} existing augmented episodes")
 
-        # Ensure data for 5-scoop episodes is downloaded
+        # Ensure data for source episodes is downloaded
         # Reload dataset with specific episodes to ensure data is available
-        logger.info("Downloading data for 5-scoop episodes...")
+        logger.info(f"Downloading data for {args.source_scoops}-scoop episodes...")
         src_dataset = LeRobotDataset(
             args.source_repo,
             revision=args.source_revision,
-            episodes=five_scoop_episodes,
+            episodes=source_episodes,
         )
 
         # Create generation plan
         generation_plan = []
-        for ep_idx in five_scoop_episodes:
-            cut_points = find_cut_points(src_dataset, ep_idx)
-            for scoop_count in [1, 2, 3, 4]:
+        for ep_idx in source_episodes:
+            cut_points = find_cut_points(src_dataset, ep_idx, args.source_scoops)
+            for scoop_count in target_scoops:
                 if scoop_count in cut_points:
                     generation_plan.append(
                         {
@@ -815,7 +841,7 @@ def main():
             return
 
         logger.info(f"Will add {len(generation_plan)} new episodes:")
-        for scoop_count in [1, 2, 3, 4]:
+        for scoop_count in target_scoops:
             count = sum(1 for p in generation_plan if p["scoop_count"] == scoop_count)
             if count > 0:
                 logger.info(f"  - {count} episodes for {scoop_count} scoop(s)")
@@ -831,6 +857,7 @@ def main():
             dataset=src_dataset,
             full_dataset=src_dataset_meta,
             generation_plan=generation_plan,
+            target_scoops=target_scoops,
             dry_run=args.dry_run,
         )
 
@@ -858,6 +885,8 @@ def main():
         new_dataset = create_augmented_dataset(
             src_dataset=src_dataset_meta,
             output_repo_id=args.output_repo,
+            source_scoops=args.source_scoops,
+            target_scoops=target_scoops,
             output_dir=output_dir,
             dry_run=args.dry_run,
         )
@@ -874,7 +903,6 @@ def main():
                 logger.info("Pushing dataset to HuggingFace Hub...")
                 new_dataset.push_to_hub(
                     private=args.private,
-                    tags=["augmented", "partial-scoop"],
                 )
                 logger.info(f"Dataset pushed to: https://huggingface.co/datasets/{new_dataset.repo_id}")
 
