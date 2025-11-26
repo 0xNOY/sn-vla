@@ -1,5 +1,14 @@
 import argparse
 import json
+import os
+
+from PIL import Image
+
+# Use a non-graphical backend when no DISPLAY is available (headless environments)
+if not os.environ.get("DISPLAY"):
+    import matplotlib
+
+    matplotlib.use("Agg")
 
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
@@ -40,6 +49,16 @@ def extract_episode_data(dataset, episode_idx=0):
                 image = frame[key].numpy().transpose(1, 2, 0)
                 # 正規化された画像を0-1範囲に調整
                 image = np.clip(image, 0, 1) if image.max() <= 1.0 else np.clip(image / 255.0, 0, 1)
+
+                # Pillowでリサイズ（cv2を使わないことでQtプラグイン問題を回避）
+                # PILはuint8を期待するため、0-1 floatを255でスケールしてから変換
+                if np.issubdtype(image.dtype, np.floating):
+                    pil_img = Image.fromarray((image * 255.0).astype(np.uint8))
+                else:
+                    pil_img = Image.fromarray(image.astype(np.uint8))
+
+                pil_img = pil_img.resize((224, 224), Image.BILINEAR)
+                image = np.array(pil_img).astype(np.float32) / 255.0
                 camera_frames[key].append(image)
 
         # previous_narrationsをデシリアライズ
