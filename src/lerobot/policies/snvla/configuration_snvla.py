@@ -42,7 +42,7 @@ class SNVLAConfig(PI05Config):
     narration_loss_weight: float = 4.0
 
     # --- Overrides from PI05Config ---
-    tokenizer_max_length: int = 500
+    tokenizer_max_length: int = 1000
 
     def __post_init__(self):
         super().__post_init__()
