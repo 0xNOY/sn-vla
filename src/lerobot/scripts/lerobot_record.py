@@ -224,7 +224,7 @@ class NarrationManager:
             raise IndexError("No more narrations to pop.")
 
         narration = self._narrations[self._next_narration_index]
-        previous_narrations_json_str = self.get_previous_narrations_json_str
+        previous_narrations_json_str = self.get_previous_narrations_json_str()
         self._previous_narrations.append(narration)
         self._next_narration_index += 1
         return narration, previous_narrations_json_str
