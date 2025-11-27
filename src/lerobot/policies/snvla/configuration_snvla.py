@@ -17,7 +17,7 @@ class SNVLAConfig(PI05Config):
 
     training: bool = True  # Whether the model is in training mode
 
-    chunk_size: int = 30  # Number of action steps to predict, in openpi called "action_horizon"
+    chunk_size: int = 120  # Number of action steps to predict, in openpi called "action_horizon"
     n_action_steps: int = 30  # Number of action steps to execute
 
     max_state_dim: int = 6  # for SO-101
@@ -31,7 +31,7 @@ class SNVLAConfig(PI05Config):
     eos_token_id: int = PALIGEMMA_SPECIAL_TOKEN_IDS["eos"]
 
     # --- Narration Inference Parameters ---
-    max_narration_length: int = 30
+    max_narration_length: int = 50
     narration_temperature: float = 0.0
 
     # --- Training Loss Parameters (pi0_fuse.compute_loss) ---
@@ -39,7 +39,7 @@ class SNVLAConfig(PI05Config):
     diffusion_loss_coeff: float = 1.0
 
     # 実況トークンの損失重み（1.0 = 通常、>1.0 = より重要視）
-    narration_loss_weight: float = 4.0
+    narration_loss_weight: float = 5.0
 
     # --- Overrides from PI05Config ---
     tokenizer_max_length: int = 1000
