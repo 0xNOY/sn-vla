@@ -77,3 +77,14 @@ CURRENT_NARRATION = "current_narration"  # t時点のナレーション
 PREVIOUS_NARRATIONS = "previous_narrations"  # t時点までのナレーション履歴
 OBS_LANGUAGE_TOKEN_AR_MASK = OBS_LANGUAGE + ".ar_mask"  # 自己回帰(1)か相互参照(0)か
 OBS_LANGUAGE_TOKEN_LOSS_MASK = OBS_LANGUAGE + ".loss_mask"  # 損失計算に使うかどうか
+# Constants for LIBERO observation keys
+LIBERO_KEY_EEF_POS = "robot_state/eef/pos"
+LIBERO_KEY_EEF_QUAT = "robot_state/eef/quat"
+LIBERO_KEY_EEF_MAT = "robot_state/eef/mat"
+LIBERO_KEY_EEF_AXISANGLE = "robot_state/eef/axisangle"
+LIBERO_KEY_GRIPPER_QPOS = "robot_state/gripper/qpos"
+LIBERO_KEY_GRIPPER_QVEL = "robot_state/gripper/qvel"
+LIBERO_KEY_JOINTS_POS = "robot_state/joints/pos"
+LIBERO_KEY_JOINTS_VEL = "robot_state/joints/vel"
+LIBERO_KEY_PIXELS_AGENTVIEW = "pixels/agentview_image"
+LIBERO_KEY_PIXELS_EYE_IN_HAND = "pixels/robot0_eye_in_hand_image"
