@@ -281,6 +281,49 @@ class NarrationManager:
 """
 
 
+class AsyncEpisodeSaver:
+    def __init__(self, dataset, events):
+        self.dataset = dataset
+        self.events = events
+        self.queue = queue.Queue()
+        self.thread = threading.Thread(target=self._worker)
+        self.thread.daemon = True
+        self.thread.start()
+
+    def save_episode(self, episode_data):
+        self.queue.put(episode_data)
+
+    def _worker(self):
+        while True:
+            episode_data = self.queue.get()
+            if episode_data is None:
+                self.queue.task_done()
+                break
+
+            try:
+                # Capture episode index before it might be modified
+                episode_index = episode_data["episode_index"]
+
+                self.dataset.save_episode(episode_data)
+
+                # Manually clean up images if they were not deleted by video encoding
+                # (i.e. if there are no video keys but there are image keys)
+                if len(self.dataset.meta.video_keys) == 0 and len(self.dataset.meta.image_keys) > 0:
+                    for cam_key in self.dataset.meta.camera_keys:
+                        img_dir = self.dataset._get_image_file_dir(episode_index, cam_key)
+                        if img_dir.is_dir():
+                            shutil.rmtree(img_dir)
+
+            except Exception as e:
+                logging.error(f"Error saving episode: {e}")
+            finally:
+                self.queue.task_done()
+
+    def stop(self):
+        self.queue.put(None)
+        self.thread.join()
+
+
 @safe_stop_image_writer
 def record_loop(
     robot: Robot,
@@ -566,6 +609,21 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     listener, events = init_keyboard_listener(custom_events=custom_events)
 
+    async_saver = AsyncEpisodeSaver(dataset, events)
+
+    # Determine the starting episode index
+    if dataset.episode_buffer is None:
+        current_episode_index = dataset.meta.total_episodes
+        dataset.episode_buffer = dataset.create_episode_buffer(episode_index=current_episode_index)
+    else:
+        current_episode_index = dataset.episode_buffer["episode_index"]
+
+    if isinstance(current_episode_index, list):
+        # Should not happen if initialized correctly, but handle just in case
+        current_episode_index = dataset.meta.total_episodes
+    elif isinstance(current_episode_index, np.ndarray):
+        current_episode_index = current_episode_index.item()
+
     with VideoEncodingManager(dataset):
         recorded_episodes = 0
         while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
@@ -617,12 +675,23 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 log_say("Re-record episode", cfg.play_sounds)
                 events["rerecord_episode"] = False
                 events["exit_early"] = False
-                dataset.clear_episode_buffer()
+                # Reset buffer with the SAME episode index
+                dataset.episode_buffer = dataset.create_episode_buffer(episode_index=current_episode_index)
                 continue
 
-            dataset.save_episode()
+            episode_data = dataset.episode_buffer
+            # Do not delete images here, they are needed by the async saver
+            dataset.clear_episode_buffer(delete_images=False)
+            async_saver.save_episode(episode_data)
 
             recorded_episodes += 1
+            current_episode_index += 1
+
+            # Manually create buffer for the NEXT episode index
+            dataset.episode_buffer = dataset.create_episode_buffer(episode_index=current_episode_index)
+
+        log_say("Waiting for all data to be saved...", cfg.play_sounds)
+        async_saver.stop()
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
 
