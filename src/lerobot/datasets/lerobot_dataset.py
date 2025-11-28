@@ -115,42 +115,20 @@ class LeRobotDatasetMetadata:
             return
 
         combined_dict = {}
-        all_keys = set()
         for episode_dict in self.metadata_buffer:
-            all_keys.update(episode_dict.keys())
-
-        for key in all_keys:
-            combined_dict[key] = []
-
-        for episode_dict in self.metadata_buffer:
-            for key in all_keys:
-                if key in episode_dict:
-                    value = episode_dict[key]
-                    # Extract value and serialize numpy arrays
-                    # because PyArrow's from_pydict function doesn't support numpy arrays
-                    val = value[0] if isinstance(value, list) else value
-                    combined_dict[key].append(val.tolist() if isinstance(val, np.ndarray) else val)
-                else:
-                    combined_dict[key].append(None)
+            for key, value in episode_dict.items():
+                if key not in combined_dict:
+                    combined_dict[key] = []
+                # Extract value and serialize numpy arrays
+                # because PyArrow's from_pydict function doesn't support numpy arrays
+                val = value[0] if isinstance(value, list) else value
+                combined_dict[key].append(val.tolist() if isinstance(val, np.ndarray) else val)
 
         first_ep = self.metadata_buffer[0]
         chunk_idx = first_ep["meta/episodes/chunk_index"][0]
         file_idx = first_ep["meta/episodes/file_index"][0]
 
-        if self.writer:
-            # Ensure schema consistency with the existing writer
-            # 1. Backfill missing columns with None
-            for name in self.writer.schema.names:
-                if name not in combined_dict:
-                    combined_dict[name] = [None] * len(self.metadata_buffer)
-
-            # 2. Remove extra columns that are not in the writer's schema
-            # (Parquet files cannot change schema mid-file)
-            keys_to_remove = [key for key in combined_dict if key not in self.writer.schema.names]
-            for key in keys_to_remove:
-                del combined_dict[key]
-
-        table = pa.Table.from_pydict(combined_dict, schema=self.writer.schema if self.writer else None)
+        table = pa.Table.from_pydict(combined_dict)
 
         if not self.writer:
             path = Path(self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx))
