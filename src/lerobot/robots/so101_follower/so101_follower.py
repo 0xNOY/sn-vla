@@ -60,6 +60,12 @@ class SO101Follower(Robot):
         )
         self.cameras = make_cameras_from_configs(config.cameras)
 
+        self.pid_gains = {
+            "default": (15, 1, 0),
+            "shoulder_lift": (50, 10, 5),
+            "elbow_flex": (30, 1, 5),
+        }
+
     @property
     def _motors_ft(self) -> dict[str, type]:
         return {f"{motor}.pos": float for motor in self.bus.motors}
@@ -150,12 +156,13 @@ class SO101Follower(Robot):
         with self.bus.torque_disabled():
             self.bus.configure_motors()
             for motor in self.bus.motors:
+                pid_gain = self.pid_gains.get(motor, self.pid_gains["default"])
                 self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
                 # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
-                self.bus.write("P_Coefficient", motor, 16)
+                self.bus.write("P_Coefficient", motor, pid_gain[0])
                 # Set I_Coefficient and D_Coefficient to default value 0 and 32
-                self.bus.write("I_Coefficient", motor, 0)
-                self.bus.write("D_Coefficient", motor, 32)
+                self.bus.write("I_Coefficient", motor, pid_gain[1])
+                self.bus.write("D_Coefficient", motor, pid_gain[2])
 
                 if motor == "gripper":
                     self.bus.write(
