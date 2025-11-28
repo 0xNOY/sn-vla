@@ -203,7 +203,7 @@ def say(text: str, blocking: bool = False):
 
     elif system == "Linux":
         text = text.replace("\n", "<break time='200ms'/>")
-        cmd = ["espeak-ng", text]
+        cmd = ["espeak-ng", "-m", text]
 
     elif system == "Windows":
         cmd = [
