@@ -19,6 +19,7 @@ def main():
     print(f"Total Frames: {dataset.num_frames}")
     print(f"Total Episodes: {dataset.num_episodes}")
     print(f"FPS: {dataset.fps}")
+    print(f"Local Path: {dataset.root}")
 
     # Analyze Tasks
     print("\nAnalyzing Tasks...")
