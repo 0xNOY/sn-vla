@@ -1,7 +1,11 @@
 import argparse
 from collections import Counter
+from pathlib import Path
+
 import numpy as np
+from huggingface_hub.errors import HFValidationError
 from tqdm import tqdm
+
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 
@@ -14,8 +18,13 @@ def main():
     args = parser.parse_args()
 
     print(f"Loading dataset: {args.dataset_name} (revision: {args.revision})...")
-    dataset = LeRobotDataset(args.dataset_name, revision=args.revision)
-    print(f"\n=== Dataset Overview ===")
+    try:
+        dataset = LeRobotDataset(args.dataset_name, revision=args.revision)
+    except HFValidationError:
+        dataset_root = Path(args.dataset_name)
+        args.dataset_name = f"{dataset_root.parent.name}/{dataset_root.name}"
+        dataset = LeRobotDataset(args.dataset_name, revision=args.revision, root=dataset_root)
+    print("\n=== Dataset Overview ===")
     print(f"Total Frames: {dataset.num_frames}")
     print(f"Total Episodes: {dataset.num_episodes}")
     print(f"FPS: {dataset.fps}")
@@ -126,7 +135,7 @@ def main():
 
     narration_counts = Counter(all_narrations)
 
-    print(f"\n=== Narration Statistics ===")
+    print("\n=== Narration Statistics ===")
     print(f"Total Narration Events: {len(all_narrations)}")
     if dataset.num_frames > 0:
         print(f"Narration Coverage: {len(all_narrations) / dataset.num_frames * 100:.2f}% of frames")
