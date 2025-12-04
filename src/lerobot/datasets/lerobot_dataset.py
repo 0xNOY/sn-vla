@@ -142,6 +142,10 @@ class LeRobotDatasetMetadata:
         self.latest_episode = self.metadata_buffer[-1]
         self.metadata_buffer.clear()
 
+    def flush(self) -> None:
+        """Write all buffered episode metadata to parquet file."""
+        self._flush_metadata_buffer()
+
     def _close_writer(self) -> None:
         """Close and cleanup the parquet writer if it exists."""
         self._flush_metadata_buffer()
@@ -1241,6 +1245,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # Check if we should trigger batch encoding
             self.episodes_since_last_encoding += 1
             if self.episodes_since_last_encoding == self.batch_encoding_size:
+                self.flush_metadata_and_reload_episodes()
                 start_ep = self.num_episodes - self.batch_encoding_size
                 end_ep = self.num_episodes
                 self._batch_save_episode_video(start_ep, end_ep)
@@ -1249,6 +1254,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if not episode_data:
             # Reset episode buffer and clean up temporary images (if not already deleted during video encoding)
             self.clear_episode_buffer(delete_images=len(self.meta.image_keys) > 0)
+
+    def flush_metadata_and_reload_episodes(self) -> None:
+        """Flush metadata to disk and reload episodes so that they are available for reading."""
+        self.meta.flush()
+        self.meta.episodes = load_episodes(self.meta.root)
 
     def _batch_save_episode_video(self, start_episode: int, end_episode: int | None = None) -> None:
         """

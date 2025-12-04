@@ -645,6 +645,7 @@ class VideoEncodingManager:
                 f"Encoding remaining {self.dataset.episodes_since_last_encoding} episodes, "
                 f"from episode {start_ep} to {end_ep - 1}"
             )
+            self.dataset.flush_metadata_and_reload_episodes()
             self.dataset._batch_save_episode_video(start_ep, end_ep)
 
         # Finalize the dataset to properly close all writers
