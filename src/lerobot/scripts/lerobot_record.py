@@ -653,9 +653,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
             # Execute a few seconds without recording to give time to manually reset the environment
             # Skip reset for the last episode to be recorded
-            if not events["stop_recording"] and (
-                (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
-            ):
+            if not events["stop_recording"]:
                 log_say("Reset the environment", cfg.play_sounds)
                 record_loop(
                     robot=robot,
@@ -695,9 +693,12 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
 
-    robot.disconnect()
-    if teleop is not None:
-        teleop.disconnect()
+    try:
+        robot.disconnect()
+        if teleop is not None:
+                teleop.disconnect()
+    except Exception as e:
+        logging.warning(f"Error disconnecting robot or teleop: {e}")
 
     if not is_headless() and listener is not None:
         listener.stop()
