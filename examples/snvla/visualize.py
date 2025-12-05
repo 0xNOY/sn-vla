@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+from pathlib import Path
 
 from PIL import Image
 
@@ -13,6 +14,7 @@ if not os.environ.get("DISPLAY"):
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
+from huggingface_hub.errors import HFValidationError
 from matplotlib.gridspec import GridSpec
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -354,7 +356,13 @@ if __name__ == "__main__":
     parser.add_argument("--interval", type=int, default=50, help="Frame interval in milliseconds")
     args = parser.parse_args()
 
-    dataset = LeRobotDataset(args.dataset_name, revision="main")
+    try:
+        dataset = LeRobotDataset(args.dataset_name, revision="main")
+    except HFValidationError:
+        dataset_root = Path(args.dataset_name)
+        dataset_repo_id = f"{dataset_root.parent.name}/{dataset_root.name}"
+        dataset = LeRobotDataset(dataset_repo_id, root=dataset_root, revision="main")
+
     visualize_episode_with_narrations(
         dataset, episode_idx=args.episode_idx, output_path=args.output, interval=args.interval
     )
