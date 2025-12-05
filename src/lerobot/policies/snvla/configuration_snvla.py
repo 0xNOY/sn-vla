@@ -17,7 +17,7 @@ class SNVLAConfig(PI05Config):
 
     training: bool = True  # Whether the model is in training mode
 
-    chunk_size: int = 60  # Number of action steps to predict, in openpi called "action_horizon"
+    chunk_size: int = 50  # Number of action steps to predict, in openpi called "action_horizon"
     n_action_steps: int = 30  # Number of action steps to execute
 
     max_state_dim: int = 6  # for SO-101
