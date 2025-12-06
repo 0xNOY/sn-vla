@@ -18,6 +18,8 @@ import time
 from contextlib import nullcontext
 from pprint import pformat
 from typing import Any
+import copy
+import gc
 
 import torch
 from accelerate import Accelerator
@@ -371,8 +373,13 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 # Create a clean model instance from config to avoid FSDP shared tensor issues
                 from lerobot.policies.factory import make_policy as make_policy_from_config
 
+                # Create a copy of the policy config and force it to CPU
+                # This prevents creating a second copy of the model on the GPU which causes OOM
+                policy_cfg = copy.deepcopy(cfg.policy)
+                policy_cfg.device = "cpu"
+
                 clean_policy = make_policy_from_config(
-                    cfg=cfg.policy,
+                    cfg=policy_cfg,
                     ds_meta=dataset.meta,
                     rename_map=cfg.rename_map,
                 )
@@ -397,6 +404,14 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                     wandb_logger.log_policy(checkpoint_dir)
 
             accelerator.wait_for_everyone()
+
+            # Cleanup to save memory
+            # We must delete state_dict because it persists in python scope
+            del state_dict
+            if is_main_process:
+                del clean_policy
+            torch.cuda.empty_cache()
+            gc.collect()
 
         if cfg.env and is_eval_step:
             if is_main_process:
