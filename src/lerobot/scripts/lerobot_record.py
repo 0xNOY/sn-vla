@@ -607,6 +607,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     if narration_manager.is_enabled():
         custom_events["n"] = "narration_occurred"
 
+    # Add task change event
+    custom_events["t"] = "change_task"
+
     listener, events = init_keyboard_listener(custom_events=custom_events)
 
     async_saver = AsyncEpisodeSaver(dataset, events)
@@ -627,6 +630,15 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     with VideoEncodingManager(dataset):
         recorded_episodes = 0
         while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
+            if events.get("change_task", False):
+                events["change_task"] = False
+                new_task = input(f"Enter new task description (current: {cfg.dataset.single_task}): ")
+                if new_task.strip():
+                    cfg.dataset.single_task = new_task
+                    logging.info(f"Task updated to: {cfg.dataset.single_task}")
+                else:
+                    logging.info("Task update cancelled.")
+
             log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
 
             # Reset narration manager for each episode
