@@ -255,17 +255,29 @@ class SNVLACore(nn.Module):
 
         # Total Loss
         loss = txt_loss + self.diffusion_loss_coeff * action_loss
-        is_loss_positive = loss.item() > 0
+
+        is_loss_positive = loss > 0
+
+        safe_loss = torch.where(is_loss_positive, loss, torch.ones_like(loss))
+        txt_loss_ratio = torch.where(is_loss_positive, txt_loss / safe_loss, torch.zeros_like(loss))
+        action_loss_ratio = torch.where(
+            is_loss_positive, (self.diffusion_loss_coeff * action_loss) / safe_loss, torch.zeros_like(loss)
+        )
+
+        valid_mask_bool = valid_loss_mask > 0
+        valid_count = valid_mask_bool.sum()
+
+        safe_count = valid_count.clamp(min=1.0)
+        valid_weight_sum = (valid_loss_mask * valid_mask_bool.float()).sum()
+        ave_text_loss_weight = valid_weight_sum / safe_count
 
         info = {
-            "loss": loss.item(),
-            "text_loss": txt_loss.item(),
-            "action_loss": action_loss.item(),
-            "text_loss_ratio": txt_loss.item() / (loss.item()) if is_loss_positive else 0.0,
-            "action_loss_ratio": (self.diffusion_loss_coeff * action_loss.item()) / loss.item()
-            if is_loss_positive
-            else 0.0,
-            "ave_text_loss_weight": valid_loss_mask[valid_loss_mask > 0].mean().item(),
+            "loss": loss.detach(),
+            "text_loss": txt_loss.detach(),
+            "action_loss": action_loss.detach(),
+            "text_loss_ratio": txt_loss_ratio.detach(),
+            "action_loss_ratio": action_loss_ratio.detach(),
+            "ave_text_loss_weight": ave_text_loss_weight.detach(),
         }
         return loss, info
 
