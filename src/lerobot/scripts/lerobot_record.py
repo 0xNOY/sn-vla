@@ -381,7 +381,7 @@ def record_loop(
         postprocessor.reset()
 
     # 最初のフレームは自動で実況を挿入
-    if narration_manager.is_enabled():
+    if 1 < len(narration_manager._narrations):
         events["narration_occurred"] = True
 
     timestamp = 0
@@ -502,7 +502,7 @@ def record_loop(
             log_rerun_data(observation=obs_processed, action=action_values)
 
             # Display narration state only when state has changed (initial frame or after 'n' key press)
-            if narration_occurred or (narration_manager.is_enabled() and timestamp == 0):
+            if narration_occurred or (timestamp == 0 and narration_manager.is_enabled()):
                 log_rerun_narrations(
                     current_narration=current_narration,
                     previous_narrations_str=previous_narrations_json_str,
