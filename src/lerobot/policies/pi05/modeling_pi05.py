@@ -549,6 +549,19 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         except ImportError:
             raise ValueError(msg) from None
 
+        target_dtype = self._get_dtype(config.dtype)
+        if target_dtype is not None:
+            self.to(target_dtype)
+
+    def _get_dtype(self, dtype_str: str) -> torch.dtype | None:
+        """Convert dtype string to torch dtype."""
+        dtype_map = {
+            "bfloat16": torch.bfloat16,
+            "float16": torch.float16,
+            "float32": torch.float32,
+        }
+        return dtype_map.get(dtype_str)
+
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
         self.gradient_checkpointing_enabled = True
