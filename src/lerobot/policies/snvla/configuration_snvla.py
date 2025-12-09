@@ -33,6 +33,7 @@ class SNVLAConfig(PI05Config):
     # --- Narration Inference Parameters ---
     max_narration_length: int = 50
     narration_temperature: float = 0.0
+    narration_generation_enabled: bool = True
 
     # --- Training Loss Parameters (pi0_fuse.compute_loss) ---
     # L = L_text + diffusion_loss_coeff * L_diffusion

@@ -558,7 +558,10 @@ class SNVLAPolicy(PI05Policy):
         # モード決定
         current_token = self._decide_mode(logits)
         prefix_pad_masks = prefix_pad_masks.clone()
-        should_narrate = current_token.item() == self.config.begin_of_narration_token_id
+        should_narrate = (
+            current_token.item() == self.config.begin_of_narration_token_id
+            and self.config.narration_generation_enabled
+        )
 
         # 実況ループ
         if should_narrate:
