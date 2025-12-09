@@ -311,6 +311,7 @@ class SNVLAPolicy(PI05Policy):
             self._prefill = torch.compile(self._prefill, dynamic=True, options=compile_options)
             self._narrate_step = torch.compile(self._narrate_step, dynamic=True, options=compile_options)
             self._act = torch.compile(self._act, dynamic=True, options=compile_options)
+            self.model.forward = torch.compile(self.model.forward, dynamic=True, options=compile_options)
 
         self.reset()
 
