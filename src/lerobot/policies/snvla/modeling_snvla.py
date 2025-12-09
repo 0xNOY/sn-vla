@@ -321,6 +321,7 @@ class SNVLAPolicy(PI05Policy):
         super().reset()  # `_action_queue` を初期化
 
         self._previous_narrations = []
+        self.latest_metrics = {}
 
     def _build_prompt_and_tokenize(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         # 初期指示はバッチから取得 (B=1を仮定 for inference)
@@ -395,6 +396,13 @@ class SNVLAPolicy(PI05Policy):
             mode_token = torch.multinomial(probs.view(-1, probs.shape[-1]), 1)
         else:
             mode_token = torch.argmax(mode_logits, dim=-1)
+
+        # Record probabilities for BON and BOA
+        probs_all = F.softmax(logits, dim=-1)
+        prob_bon = probs_all[0, 0, self.config.begin_of_narration_token_id].item()
+        prob_boa = probs_all[0, 0, self.config.begin_of_action_token_id].item()
+        self.latest_metrics["prob_bon"] = prob_bon
+        self.latest_metrics["prob_boa"] = prob_boa
 
         return mode_token.view(-1, 1)
 
@@ -530,6 +538,7 @@ class SNVLAPolicy(PI05Policy):
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations."""
         self.eval()
+        self.latest_metrics = {}  # Reset metrics for the new step
 
         # アクションキュー確認
         if len(self._action_queue) > 0:
@@ -550,17 +559,37 @@ class SNVLAPolicy(PI05Policy):
         # モード決定
         current_token = self._decide_mode(logits)
         prefix_pad_masks = prefix_pad_masks.clone()
+        should_narrate = current_token.item() == self.config.begin_of_narration_token_id
 
         # 実況ループ
-        if current_token.item() == self.config.begin_of_narration_token_id:
+        if should_narrate:
             logging.info("SN-VLA starting narration generation...")
-
             generated_tokens = []
             for _step in range(self.config.max_narration_length):
                 # KVキャッシュを更新しながら1ステップデコード
                 new_token, logits, kv_cache, current_pos_id = self._narrate_step(
                     current_token, kv_cache, prefix_pad_masks, current_pos_id
                 )
+
+                # Calculate entropy and top-k (moved from _narrate_step to avoid graph break)
+                probs_step = F.softmax(logits, dim=-1)  # (B, 1, V)
+                log_probs = F.log_softmax(logits, dim=-1)
+                entropy = -(probs_step * log_probs).sum(dim=-1).item()
+
+                top_k_val, top_k_idx = torch.topk(probs_step, k=5, dim=-1)
+                top_k_tokens = [self.tokenizer.decode([idx.item()]) for idx in top_k_idx[0, 0]]
+                top_k_probs = top_k_val[0, 0].tolist()
+                
+                step_metrics = {
+                    "token": self.tokenizer.decode([new_token.item()]),
+                    "entropy": entropy,
+                    "top_k": list(zip(top_k_tokens, top_k_probs)),
+                }
+                
+                if "narration_metrics" not in self.latest_metrics:
+                    self.latest_metrics["narration_metrics"] = []
+                self.latest_metrics["narration_metrics"].append(step_metrics)
+
                 narration_pad = torch.ones(
                     prefix_pad_masks.shape[0],
                     1,
@@ -578,6 +607,10 @@ class SNVLAPolicy(PI05Policy):
             new_narration = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
             self._previous_narrations.append(new_narration)
             logging.info(f"SN-VLA Narrated: {new_narration}")
+
+        # Store narration state
+        self.latest_metrics["current_narration"] = new_narration if should_narrate else ""
+        self.latest_metrics["previous_narrations"] = self._previous_narrations[:-1] if should_narrate else self._previous_narrations
 
         # 行動生成
         bsize = images[0].shape[0]

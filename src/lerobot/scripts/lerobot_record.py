@@ -105,6 +105,7 @@ from lerobot.robots import (  # noqa: F401
     so100_follower,
     so101_follower,
 )
+from lerobot.policies.snvla.modeling_snvla import SNVLAPolicy
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -474,8 +475,8 @@ def record_loop(
                             len("Next narration:     ") + len(next_narration) if next_narration else 0,
                         )
                     )
-                    + f"\n{GRAY}Inserted narration: {current_narration}{RESET}\n"
-                    f"{GREEN}Next narration:     {next_narration}\n{RESET}" + "=" * bar_len,
+                    + f"\n{GRAY}Inserted narration: {RESET}{GREEN}{current_narration}{RESET}\n"
+                    f"{GRAY}Next narration: {RESET}{next_narration}\n" + "=" * bar_len,
                     flush=True,
                 )
                 log_say(current_narration)
@@ -495,6 +496,29 @@ def record_loop(
             if narration_manager.is_enabled():
                 frame["previous_narrations"] = previous_narrations_json_str
                 frame["current_narration"] = current_narration
+
+            # Add SNVLA specific metrics if available
+            if isinstance(policy, SNVLAPolicy) and hasattr(policy, "latest_metrics") and policy.latest_metrics:
+                for key, value in policy.latest_metrics.items():
+                    if key in dataset.features:
+                        if key in ["prob_bon", "prob_boa"]:
+                            frame[key] = np.array([value], dtype=np.float32)
+                        elif key in ["narration_metrics", "previous_narrations"]:
+                            frame[key] = json.dumps(value)
+                        else:
+                            frame[key] = value
+            
+            # Ensure keys exist in frame even if not in latest_metrics (e.g. no narration this step)
+            if "narration_metrics" in dataset.features and "narration_metrics" not in frame:
+                    frame["narration_metrics"] = json.dumps([])
+            if "prob_bon" in dataset.features and "prob_bon" not in frame:
+                    frame["prob_bon"] = np.array([0.0], dtype=np.float32)
+            if "prob_boa" in dataset.features and "prob_boa" not in frame:
+                    frame["prob_boa"] = np.array([0.0], dtype=np.float32)
+            if "current_narration" in dataset.features and "current_narration" not in frame:
+                    frame["current_narration"] = ""
+            if "previous_narrations" in dataset.features and "previous_narrations" not in frame:
+                    frame["previous_narrations"] = json.dumps([])
 
             dataset.add_frame(frame)
 
@@ -544,6 +568,14 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     # Add narration features if narrations are provided
     if cfg.dataset.narrations is not None and len(cfg.dataset.narrations) > 0:
+        dataset_features["current_narration"] = {"dtype": "string", "shape": (1,), "names": None}
+        dataset_features["previous_narrations"] = {"dtype": "string", "shape": (1,), "names": None}
+
+    # Add SNVLA specific features
+    if cfg.policy is not None and cfg.policy.type == "snvla":
+        dataset_features["prob_bon"] = {"dtype": "float32", "shape": (1,), "names": None}
+        dataset_features["prob_boa"] = {"dtype": "float32", "shape": (1,), "names": None}
+        dataset_features["narration_metrics"] = {"dtype": "string", "shape": (1,), "names": None}
         dataset_features["current_narration"] = {"dtype": "string", "shape": (1,), "names": None}
         dataset_features["previous_narrations"] = {"dtype": "string", "shape": (1,), "names": None}
 
