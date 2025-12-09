@@ -8,12 +8,14 @@ from torch import Tensor, nn
 from transformers import AutoTokenizer
 
 from lerobot.policies.pi05.modeling_pi05 import (
+    ActionSelectKwargs,
     PaliGemmaWithExpertModel,
     PI05Policy,
     PI05Pytorch,
     get_gemma_config,
     make_att_2d_masks,
 )
+from typing_extensions import Unpack
 from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
@@ -299,6 +301,9 @@ class SNVLAPolicy(PI05Policy):
         if config.gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
 
+        # Initialize RTC processor
+        self.init_rtc_processor()
+
         self.model.to(config.device)
 
         if config.compile_model:
@@ -453,7 +458,14 @@ class SNVLAPolicy(PI05Policy):
         return new_token.view(-1, 1), new_logits, new_kv_cache, position_ids
 
     @torch.no_grad()
-    def _act(self, kv_cache: Any, prefix_pad_masks: Tensor, bsize: int, current_pos_id: Tensor):
+    def _act(
+        self,
+        kv_cache: Any,
+        prefix_pad_masks: Tensor,
+        bsize: int,
+        current_pos_id: Tensor,
+        **kwargs: Unpack[ActionSelectKwargs],
+    ):
         """Generates an action chunk using the diffusion model."""
 
         # `BEGIN_OF_ACTION` トークンをフォワード
@@ -514,14 +526,38 @@ class SNVLAPolicy(PI05Policy):
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
 
-            v_t = self.model.denoise_step(
-                prefix_pad_masks=act_prefix_pad_masks,
-                past_key_values=act_kv_cache,
-                x_t=x_t,
-                timestep=expanded_time,
-            )
+            # Define a closure function to properly capture expanded_time
+            def denoise_step_partial_call(input_x_t, current_timestep=expanded_time):
+                return self.model.denoise_step(
+                    prefix_pad_masks=act_prefix_pad_masks,
+                    past_key_values=act_kv_cache,
+                    x_t=input_x_t,
+                    timestep=current_timestep,
+                )
+
+            if self._rtc_enabled():
+                inference_delay = kwargs.get("inference_delay")
+                prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
+                execution_horizon = kwargs.get("execution_horizon")
+
+                v_t = self.rtc_processor.denoise_step(
+                    x_t=x_t,
+                    prev_chunk_left_over=prev_chunk_left_over,
+                    inference_delay=inference_delay,
+                    time=time,
+                    original_denoise_step_partial=denoise_step_partial_call,
+                    execution_horizon=execution_horizon,
+                )
+            else:
+                v_t = denoise_step_partial_call(x_t)
+
             # v_t should already be in correct dtype from denoise_step
             x_t = x_t + dt * v_t
+
+            # Record x_t and v_t after Euler step
+            if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
+                self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
+
             time = time + dt
 
         actions = x_t
@@ -533,7 +569,7 @@ class SNVLAPolicy(PI05Policy):
         self._action_queue.extend(actions_unpadded.transpose(0, 1))
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
         """Select a single action given environment observations."""
         self.eval()
         self.latest_metrics = {}  # Reset metrics for the new step
@@ -614,7 +650,7 @@ class SNVLAPolicy(PI05Policy):
 
         # 行動生成
         bsize = images[0].shape[0]
-        self._act(kv_cache, prefix_pad_masks, bsize, current_pos_id)
+        self._act(kv_cache, prefix_pad_masks, bsize, current_pos_id, **kwargs)
 
         return self._action_queue.popleft()
 
