@@ -34,9 +34,30 @@ CONFIG = VisualizerConfig()
 
 
 NARRATION_DIV_TEMPLATE = """
-<div style="font-size: {font_size}; padding: 10px; border: 1px solid #ccc; background-color: #f9f9f9; width: 100%; height: 100%; overflow-y: auto; box-sizing: border-box;">
-    <span style="color: black;">{previous_narrations}</span>
-    <span style="color: blue; font-weight: bold;">{current_narration}</span>
+<div style="width: 100%; height: 100%; display: flex; flex-direction: column; gap: 10px; font-family: sans-serif;">
+    <!-- Previous narrations (Context) -->
+    <div style="flex-grow: 1; overflow-y: auto; padding: 10px; border: 1px solid #eee; border-radius: 5px; background-color: #fcfcfc;">
+        <span style="color: #666; font-size: small;">Previous Commentary:</span><br>
+        <span style="color: #444;">{previous_narrations}</span>
+    </div>
+    
+    <!-- Current narration (Robot Chat Bubble) -->
+    <div style="display: flex; flex-direction: row; align-items: flex-start; gap: 10px;">
+        <div style="font-size: 24px;">🤖</div>
+        <div style="background-color: #e9e9eb; padding: 10px; border-radius: 15px; border-top-left-radius: 0; max-width: 80%;">
+             <div style="font-weight: bold; font-size: {font_size}; color: #000;">{current_narration}</div>
+        </div>
+    </div>
+</div>
+"""
+
+INSTRUCTION_DIV_TEMPLATE = """
+<div style="width: 100%; padding: 10px; display: flex; flex-direction: row; justify-content: flex-end; align-items: flex-start; gap: 10px; font-family: sans-serif;">
+    <div style="background-color: #007aff; color: white; padding: 10px; border-radius: 15px; border-top-right-radius: 0; max-width: 80%;">
+        <div style="font-size: small; opacity: 0.8; margin-bottom: 2px;">User</div>
+        <div style="font-size: {font_size};">{task_instruction}</div>
+    </div>
+    <div style="font-size: 24px;">👤</div>
 </div>
 """
 
@@ -62,7 +83,18 @@ def load_data(dataset, episode_index):
         "previous_narrations": [],
         "images": {},  # key: list of rgba arrays
         "timestamp": [],
+        "task_instruction": "",
     }
+
+    # Get task instruction from the first frame of the episode
+    first_frame = dataset[from_idx]
+    if "task" in first_frame:
+        data["task_instruction"] = first_frame["task"]
+    elif "language_instruction" in first_frame:
+        data["task_instruction"] = first_frame["language_instruction"]
+    else:
+        # Fallback: check metadata if available
+        data["task_instruction"] = "Execute the task."
 
     camera_keys = dataset.meta.camera_keys
     for key in camera_keys:
@@ -146,7 +178,19 @@ def create_visualization(doc):
 
     # --- Components ---
 
-    # 1. Narration Box
+    # 1. Instruction Box (User)
+    instruction_div = Div(
+        text=INSTRUCTION_DIV_TEMPLATE.format(
+            font_size=CONFIG.narration_font_size,
+            task_instruction=data["task_instruction"],
+        ),
+        width=CONFIG.narration_width,
+        # Adjust height as needed, or let it be auto if supported (Div supports height)
+        height=100,
+    )
+
+    # 2. Narration Box (Robot)
+    # We combine previous and current narration into one chat-like interface
     narration_div = Div(
         text=NARRATION_DIV_TEMPLATE.format(
             font_size=CONFIG.narration_font_size,
@@ -154,7 +198,7 @@ def create_visualization(doc):
             current_narration=data["current_narration"][0],
         ),
         width=CONFIG.narration_width,
-        height=CONFIG.narration_height,
+        height=CONFIG.narration_height - 100,  # Substract instruction height
     )
 
     # 2. Camera Views
@@ -285,7 +329,10 @@ def create_visualization(doc):
                     timestamp_div,
                     controls,
                 ),
-                narration_div,
+                column(
+                    instruction_div,
+                    narration_div,
+                ),
             ),
         ],
     )
