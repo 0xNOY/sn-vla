@@ -16,6 +16,7 @@
 import logging
 import os
 import platform
+import random
 import select
 import subprocess
 import sys
@@ -29,6 +30,14 @@ import numpy as np
 import torch
 from accelerate import Accelerator
 from datasets.utils.logging import disable_progress_bar, enable_progress_bar
+
+
+def set_seed(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 def inside_slurm():

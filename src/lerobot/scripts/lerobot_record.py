@@ -131,6 +131,7 @@ from lerobot.utils.utils import (
     get_safe_torch_device,
     init_logging,
     log_say,
+    set_seed,
 )
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, log_rerun_narrations
 
@@ -196,6 +197,8 @@ class RecordConfig:
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
+    # Set the random seed for reproducibility
+    seed: int | None = None
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -545,6 +548,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
         init_rerun(session_name="recording")
+
+    if cfg.seed is not None:
+        set_seed(cfg.seed)
 
     robot = make_robot_from_config(cfg.robot)
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
