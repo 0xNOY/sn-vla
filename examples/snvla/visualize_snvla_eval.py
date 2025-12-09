@@ -1,23 +1,58 @@
 import argparse
-import json
+import contextlib
 import logging
 import sys
 from pathlib import Path
+from dataclasses import dataclass
 
 import numpy as np
-import torch
-from bokeh.layouts import column, row, layout
-from bokeh.models import ColumnDataSource, Div, Slider, Span, Range1d
-from bokeh.plotting import figure, curdoc
-from bokeh.io import show
+from bokeh.layouts import column, layout, row
+from bokeh.models import Button, ColumnDataSource, Div, Slider, Span
+from bokeh.plotting import curdoc, figure
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+
+@dataclass
+class VisualizerConfig:
+    narration_width: int = 300
+    narration_height: int = 500
+    narration_font_size: str = "18px"
+    image_height: int = 400
+    bon_plot_height: int = 200
+    bon_line_width: int = 1
+    bon_line_color: str = "green"
+    time_line_width: int = 1
+    time_line_color: str = "red"
+    play_button_width: int = 60
+    animation_interval_ms: int = 1000 // 30
+    timestamp_font_size: str = "16px"
+    timestamp_height: int = 30
+
+
+CONFIG = VisualizerConfig()
+
+
+NARRATION_DIV_TEMPLATE = """
+<div style="font-size: {font_size}; padding: 10px; border: 1px solid #ccc; background-color: #f9f9f9; width: 100%; height: 100%; overflow-y: auto; box-sizing: border-box;">
+    <span style="color: black;">{previous_narrations}</span>
+    <span style="color: blue; font-weight: bold;">{current_narration}</span>
+</div>
+"""
+
+
+TIMESTAMP_DIV_TEMPLATE = """
+<div style="font-size: {font_size}; font-weight: bold; text-align: center; width: 100%; height: 100%;">
+    Time: {time:.2f} s
+</div>
+"""
+
 
 def load_data(dataset, episode_index):
     """Load data for a specific episode."""
     from_idx = dataset.meta.episodes["dataset_from_index"][episode_index]
     to_idx = dataset.meta.episodes["dataset_to_index"][episode_index]
-    
+
     # Pre-load all data for the episode to avoid latency during interaction
     # Note: For very large episodes, this might need optimization (lazy loading)
     data = {
@@ -25,20 +60,22 @@ def load_data(dataset, episode_index):
         "prob_bon": [],
         "current_narration": [],
         "previous_narrations": [],
-        "images": {} # key: list of rgba arrays
+        "images": {},  # key: list of rgba arrays
+        "timestamp": [],
     }
-    
+
     camera_keys = dataset.meta.camera_keys
     for key in camera_keys:
         data["images"][key] = []
 
     prev_narrations = ""
-    for i, idx in enumerate(range(from_idx, to_idx)):
+    for idx in range(from_idx, to_idx):
         frame = dataset[idx]
-        
+
         # Metrics
         data["prob_bon"].append(frame.get("prob_bon", 0.0).item() if "prob_bon" in frame else 0.0)
         data["current_narration"].append(frame.get("current_narration", "").replace("\n", "<br>"))
+        data["timestamp"].append(frame.get("timestamp", 0.0).item())
 
         data["previous_narrations"].append(prev_narrations)
         prev_narrations += data["current_narration"][-1]
@@ -49,7 +86,7 @@ def load_data(dataset, episode_index):
                 # CHW float32 -> HWC uint8 RGBA for Bokeh
                 img_tensor = frame[key]
                 img_np = (img_tensor.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-                
+
                 # Add Alpha channel
                 h, w, c = img_np.shape
                 if c == 3:
@@ -57,10 +94,10 @@ def load_data(dataset, episode_index):
                     img_rgba = np.concatenate([img_np, alpha], axis=2)
                 else:
                     img_rgba = img_np
-                
+
                 # Flip vertically because Bokeh origin is bottom-left
                 img_rgba = np.ascontiguousarray(np.flipud(img_rgba))
-                
+
                 # Convert to 32-bit integer array for Bokeh
                 # (M, N) array of RGBA values packed into 32-bit integers
                 view = img_rgba.view(dtype=np.uint32).reshape((h, w))
@@ -68,16 +105,17 @@ def load_data(dataset, episode_index):
 
     return data, camera_keys
 
+
 def create_visualization(doc):
     # Parse arguments from command line
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-id", type=str, required=True)
     parser.add_argument("--episode-index", type=int, default=0)
     parser.add_argument("--root", type=str, default=None)
-    
+
     # Parse only known args to avoid issues if bokeh injects others (though --args should isolate)
     args, _ = parser.parse_known_args(sys.argv[1:])
-    
+
     repo_id = args.repo_id
     episode_index = args.episode_index
     root = args.root
@@ -87,7 +125,7 @@ def create_visualization(doc):
         root = Path(root)
 
     logging.info(f"Loading dataset: {repo_id}, Episode: {episode_index}")
-    
+
     try:
         dataset = LeRobotDataset(repo_id, root=root)
     except Exception as e:
@@ -96,95 +134,165 @@ def create_visualization(doc):
 
     data, camera_keys = load_data(dataset, episode_index)
     num_frames = len(data["index"])
-    
+
     # --- Data Sources ---
-    # Source for the current frame (images, text)
-    current_source = ColumnDataSource(data={
-        "previous_narrations": [data["previous_narrations"][0]],
-        "current_narration": [data["current_narration"][0]],
-    })
-    
     # Add image sources
     image_sources = {}
     for key in camera_keys:
         image_sources[key] = ColumnDataSource(data={"image": [data["images"][key][0]]})
 
     # Source for the full timeline (BON graph)
-    timeline_source = ColumnDataSource(data={
-        "index": data["index"],
-        "prob_bon": data["prob_bon"]
-    })
+    timeline_source = ColumnDataSource(data={"index": data["index"], "prob_bon": data["prob_bon"]})
 
     # --- Components ---
 
     # 1. Narration Box
     narration_div = Div(
-        text=f"""
-        <div style="font-size: 16px; padding: 10px; border: 1px solid #ccc; background-color: #f9f9f9; height: 100px; overflow-y: auto;">
-            <span style="color: black;">{data['previous_narrations'][0]}</span>
-            <span style="color: blue; font-weight: bold;">{data['current_narration'][0]}</span>
-        </div>
-        """,
-        width=800, height=120
+        text=NARRATION_DIV_TEMPLATE.format(
+            font_size=CONFIG.narration_font_size,
+            previous_narrations=data["previous_narrations"][0],
+            current_narration=data["current_narration"][0],
+        ),
+        width=CONFIG.narration_width,
+        height=CONFIG.narration_height,
     )
 
     # 2. Camera Views
     image_plots = []
+    total_width = 0
     for key in camera_keys:
         # Get dimensions from the first frame
         h, w = data["images"][key][0].shape
-        p = figure(title=f"Camera: {key}", x_range=(0, w), y_range=(0, h), 
-                   width=300, height=int(300 * h / w), tools="")
+        width = CONFIG.image_height * w // h
+        total_width += width
+        p = figure(
+            title=f"Camera: {key}",
+            x_range=(0, w),
+            y_range=(0, h),
+            width=width,
+            height=CONFIG.image_height,
+            tools="",
+        )
         p.image_rgba(image="image", x=0, y=0, dw=w, dh=h, source=image_sources[key])
         p.axis.visible = False
         p.grid.visible = False
         image_plots.append(p)
 
     # 3. BON Probability Plot
-    bon_plot = figure(title="BON Probability", x_axis_label="Time Step", y_axis_label="Probability",
-                      width=800, height=200, x_range=(0, num_frames))
-    bon_plot.line("index", "prob_bon", source=timeline_source, line_width=2, color="green")
-    
+    bon_plot = figure(
+        title="BON Probability",
+        x_axis_label="Time Step",
+        y_axis_label="Probability",
+        width=total_width,
+        height=CONFIG.bon_plot_height,
+        x_range=(0, num_frames),
+    )
+    bon_plot.line(
+        "index",
+        "prob_bon",
+        source=timeline_source,
+        line_width=CONFIG.bon_line_width,
+        color=CONFIG.bon_line_color,
+    )
+
     # Vertical line for current time
-    time_line = Span(location=0, dimension='height', line_color='red', line_width=2)
+    time_line = Span(
+        location=0, dimension="height", line_color=CONFIG.time_line_color, line_width=CONFIG.time_line_width
+    )
     bon_plot.add_layout(time_line)
 
     # 4. Slider
-    slider = Slider(start=0, end=num_frames - 1, value=0, step=1, title="Time Step", width=800)
+    slider = Slider(
+        start=0,
+        end=num_frames - 1,
+        value=0,
+        step=1,
+        title="Time Step",
+        width=total_width - CONFIG.play_button_width,
+    )
+
+    # 5. Play/Export Controls
+    play_button = Button(label="Play", width=CONFIG.play_button_width, button_type="success")
+
+    # 6. Timestamp Display
+    timestamp_div = Div(
+        text=TIMESTAMP_DIV_TEMPLATE.format(
+            font_size=CONFIG.timestamp_font_size,
+            time=data["timestamp"][0],
+        ),
+        width=total_width - CONFIG.play_button_width,
+        height=CONFIG.timestamp_height,
+    )
 
     # --- Callbacks ---
     def update(attr, old, new):
         idx = int(new)
-        
+
         # Update text
         prev = data["previous_narrations"][idx]
         curr = data["current_narration"][idx]
-        narration_div.text = f"""
-        <div style="font-size: 16px; padding: 10px; border: 1px solid #ccc; background-color: #f9f9f9; height: 100px; overflow-y: auto;">
-            <span style="color: black;">{prev}</span>
-            <span style="color: blue; font-weight: bold;">{curr}</span>
-        </div>
-        """
-        
+        narration_div.text = NARRATION_DIV_TEMPLATE.format(
+            font_size=CONFIG.narration_font_size,
+            previous_narrations=prev,
+            current_narration=curr,
+        )
+
         # Update images
         for key in camera_keys:
             image_sources[key].data = {"image": [data["images"][key][idx]]}
-            
+
         # Update time line
         time_line.location = idx
 
+        # Update timestamp
+        timestamp_div.text = TIMESTAMP_DIV_TEMPLATE.format(
+            font_size=CONFIG.timestamp_font_size,
+            time=data["timestamp"][idx],
+        )
+
     slider.on_change("value", update)
 
+    def animate_update():
+        frame = slider.value + 1
+        if frame >= num_frames:
+            frame = 0
+        slider.value = frame
+
+    callback_id = None
+
+    def toggle_play():
+        nonlocal callback_id
+        if play_button.label == "Play":
+            play_button.label = "Pause"
+            callback_id = doc.add_periodic_callback(animate_update, CONFIG.animation_interval_ms)
+        else:
+            play_button.label = "Play"
+            if callback_id:
+                with contextlib.suppress(ValueError):
+                    doc.remove_periodic_callback(callback_id)
+
+    play_button.on_click(toggle_play)
+
     # --- Layout ---
-    l = layout([
-        [row(image_plots)],
-        [narration_div],
-        [bon_plot],
-        [slider]
-    ])
-    
-    doc.add_root(l)
+    controls = row(play_button, slider)
+
+    main_layout = layout(
+        [
+            row(
+                column(
+                    row(image_plots),
+                    bon_plot,
+                    timestamp_div,
+                    controls,
+                ),
+                narration_div,
+            ),
+        ],
+    )
+
+    doc.add_root(main_layout)
     doc.title = "SNVLA Evaluation Visualizer"
+
 
 # To run this script:
 # bokeh serve src/lerobot/scripts/visualize_snvla_eval.py --args --repo-id <repo_id> --episode-index <idx>
