@@ -2,7 +2,6 @@ import logging
 import math
 from typing import Any
 
-import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
@@ -14,7 +13,6 @@ from lerobot.policies.pi05.modeling_pi05 import (
     PI05Pytorch,
     get_gemma_config,
     make_att_2d_masks,
-    pad_vector,
 )
 from lerobot.utils.constants import (
     ACTION,
@@ -28,8 +26,8 @@ from .processor_snvla import (
     OBS_LANGUAGE_TOKEN_AR_MASK,
     OBS_LANGUAGE_TOKEN_LOSS_MASK,
     TASK_KEY,
-    make_prefix_prompt,
     discretize_state,
+    make_prefix_prompt,
 )
 
 
@@ -579,13 +577,13 @@ class SNVLAPolicy(PI05Policy):
                 top_k_val, top_k_idx = torch.topk(probs_step, k=5, dim=-1)
                 top_k_tokens = [self.tokenizer.decode([idx.item()]) for idx in top_k_idx[0, 0]]
                 top_k_probs = top_k_val[0, 0].tolist()
-                
+
                 step_metrics = {
                     "token": self.tokenizer.decode([new_token.item()]),
                     "entropy": entropy,
-                    "top_k": list(zip(top_k_tokens, top_k_probs)),
+                    "top_k": list(zip(top_k_tokens, top_k_probs, strict=True)),
                 }
-                
+
                 if "narration_metrics" not in self.latest_metrics:
                     self.latest_metrics["narration_metrics"] = []
                 self.latest_metrics["narration_metrics"].append(step_metrics)
@@ -610,7 +608,9 @@ class SNVLAPolicy(PI05Policy):
 
         # Store narration state
         self.latest_metrics["current_narration"] = new_narration if should_narrate else ""
-        self.latest_metrics["previous_narrations"] = self._previous_narrations[:-1] if should_narrate else self._previous_narrations
+        self.latest_metrics["previous_narrations"] = (
+            self._previous_narrations[:-1] if should_narrate else self._previous_narrations
+        )
 
         # 行動生成
         bsize = images[0].shape[0]
