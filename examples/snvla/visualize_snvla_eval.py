@@ -17,7 +17,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 class VisualizerConfig:
     narration_width: int = 300
     narration_height: int = 500
-    narration_font_size: str = "18px"
+    narration_font_size: str = "16px"
     image_height: int = 400
     bon_plot_height: int = 200
     bon_line_width: int = 1
@@ -35,17 +35,11 @@ CONFIG = VisualizerConfig()
 
 NARRATION_DIV_TEMPLATE = """
 <div style="width: 100%; height: 100%; display: flex; flex-direction: column; gap: 10px; font-family: sans-serif;">
-    <!-- Previous narrations (Context) -->
-    <div style="flex-grow: 1; overflow-y: auto; padding: 10px; border: 1px solid #eee; border-radius: 5px; background-color: #fcfcfc;">
-        <span style="color: #666; font-size: small;">Previous Commentary:</span><br>
-        <span style="color: #444;">{previous_narrations}</span>
-    </div>
-    
-    <!-- Current narration (Robot Chat Bubble) -->
     <div style="display: flex; flex-direction: row; align-items: flex-start; gap: 10px;">
-        <div style="font-size: 24px;">🤖</div>
-        <div style="background-color: #e9e9eb; padding: 10px; border-radius: 15px; border-top-left-radius: 0; max-width: 80%;">
-             <div style="font-weight: bold; font-size: {font_size}; color: #000;">{current_narration}</div>
+        <div style="font-size: 20px;">🤖</div>
+        <div style="font-size: {font_size}; background-color: #e9e9eb; padding: 10px; border-radius: 15px; border-top-left-radius: 0; max-width: 80%;">
+            <span style="color: #444;">{previous_narrations}</span>
+            <div style="font-weight: bold; color: #000;">{current_narration}</div>
         </div>
     </div>
 </div>
@@ -54,10 +48,10 @@ NARRATION_DIV_TEMPLATE = """
 INSTRUCTION_DIV_TEMPLATE = """
 <div style="width: 100%; padding: 10px; display: flex; flex-direction: row; justify-content: flex-end; align-items: flex-start; gap: 10px; font-family: sans-serif;">
     <div style="background-color: #007aff; color: white; padding: 10px; border-radius: 15px; border-top-right-radius: 0; max-width: 80%;">
-        <div style="font-size: small; opacity: 0.8; margin-bottom: 2px;">User</div>
+        <div style="font-size: small; opacity: 0.8; margin-bottom: 2px;">Task</div>
         <div style="font-size: {font_size};">{task_instruction}</div>
     </div>
-    <div style="font-size: 24px;">👤</div>
+    <div style="font-size: 20px;">👤</div>
 </div>
 """
 
