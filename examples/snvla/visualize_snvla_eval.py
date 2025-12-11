@@ -2,8 +2,8 @@ import argparse
 import contextlib
 import logging
 import sys
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 from bokeh.layouts import column, layout, row
@@ -15,18 +15,20 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 @dataclass
 class VisualizerConfig:
-    narration_width: int = 300
+    narration_width: int = 400
     narration_height: int = 500
-    narration_font_size: str = "16px"
+    narration_font_size: str = "14px"
     image_height: int = 400
     bon_plot_height: int = 200
     bon_line_width: int = 1
     bon_line_color: str = "green"
+    boa_line_width: int = 1
+    boa_line_color: str = "blue"
     time_line_width: int = 1
     time_line_color: str = "red"
     play_button_width: int = 60
     animation_interval_ms: int = 1000 // 30
-    timestamp_font_size: str = "16px"
+    timestamp_font_size: str = "14px"
     timestamp_height: int = 30
 
 
@@ -37,9 +39,9 @@ NARRATION_DIV_TEMPLATE = """
 <div style="width: 100%; height: 100%; display: flex; flex-direction: column; gap: 10px; font-family: sans-serif;">
     <div style="display: flex; flex-direction: row; align-items: flex-start; gap: 10px;">
         <div style="font-size: 20px;">🤖</div>
-        <div style="font-size: {font_size}; background-color: #e9e9eb; padding: 10px; border-radius: 15px; border-top-left-radius: 0; max-width: 80%;">
+        <div style="font-size: {font_size}; background-color: #e9e9eb; padding: 10px; border-radius: 15px; border-top-left-radius: 0; max-width: 90%;">
             <span style="color: #444;">{previous_narrations}</span>
-            <div style="font-weight: bold; color: #000;">{current_narration}</div>
+            <span style="font-weight: bold; color: #000;">{current_narration}</span>
         </div>
     </div>
 </div>
@@ -47,7 +49,7 @@ NARRATION_DIV_TEMPLATE = """
 
 INSTRUCTION_DIV_TEMPLATE = """
 <div style="width: 100%; padding: 10px; display: flex; flex-direction: row; justify-content: flex-end; align-items: flex-start; gap: 10px; font-family: sans-serif;">
-    <div style="background-color: #007aff; color: white; padding: 10px; border-radius: 15px; border-top-right-radius: 0; max-width: 80%;">
+    <div style="background-color: #007aff; color: white; padding: 10px; border-radius: 15px; border-top-right-radius: 0; max-width: 90%;">
         <div style="font-size: small; opacity: 0.8; margin-bottom: 2px;">Task</div>
         <div style="font-size: {font_size};">{task_instruction}</div>
     </div>
@@ -73,6 +75,7 @@ def load_data(dataset, episode_index):
     data = {
         "index": np.arange(to_idx - from_idx),
         "prob_bon": [],
+        "prob_boa": [],
         "current_narration": [],
         "previous_narrations": [],
         "images": {},  # key: list of rgba arrays
@@ -100,7 +103,10 @@ def load_data(dataset, episode_index):
 
         # Metrics
         data["prob_bon"].append(frame.get("prob_bon", 0.0).item() if "prob_bon" in frame else 0.0)
-        data["current_narration"].append(frame.get("current_narration", "").replace("\n", "<br>"))
+        data["prob_boa"].append(frame.get("prob_boa", 0.0).item() if "prob_boa" in frame else 0.0)
+        data["current_narration"].append(
+            frame.get("current_narration", "").replace("\n", "<span style='color: #aaa;'>↵</span><br>")
+        )
         data["timestamp"].append(frame.get("timestamp", 0.0).item())
 
         data["previous_narrations"].append(prev_narrations)
@@ -168,7 +174,20 @@ def create_visualization(doc):
         image_sources[key] = ColumnDataSource(data={"image": [data["images"][key][0]]})
 
     # Source for the full timeline (BON graph)
-    timeline_source = ColumnDataSource(data={"index": data["index"], "prob_bon": data["prob_bon"]})
+    timeline_source = ColumnDataSource(
+        data={"index": data["index"], "prob_bon": data["prob_bon"], "prob_boa": data["prob_boa"]}
+    )
+
+    # Source for points where BON > BOA
+    bon_gt_boa_indices = [
+        i for i, (bon, boa) in enumerate(zip(data["prob_bon"], data["prob_boa"], strict=True)) if bon > boa
+    ]
+    bon_gt_boa_source = ColumnDataSource(
+        data={
+            "index": bon_gt_boa_indices,
+            "prob_bon": [data["prob_bon"][i] for i in bon_gt_boa_indices],
+        }
+    )
 
     # --- Components ---
 
@@ -231,7 +250,29 @@ def create_visualization(doc):
         source=timeline_source,
         line_width=CONFIG.bon_line_width,
         color=CONFIG.bon_line_color,
+        legend_label="BON",
     )
+    bon_plot.line(
+        "index",
+        "prob_boa",
+        source=timeline_source,
+        line_width=CONFIG.boa_line_width,
+        color=CONFIG.boa_line_color,
+        legend_label="BOA",
+    )
+    # Plot points where BON > BOA
+    bon_plot.circle(
+        "index",
+        "prob_bon",
+        source=bon_gt_boa_source,
+        size=6,
+        color="red",
+        legend_label="BON > BOA",
+    )
+
+    bon_plot.legend.location = "top_left"
+    bon_plot.legend.click_policy = "hide"
+    bon_plot.add_layout(bon_plot.legend[0], "right")
 
     # Vertical line for current time
     time_line = Span(
