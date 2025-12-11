@@ -70,6 +70,7 @@ from pprint import pformat
 from typing import Any
 
 import numpy as np
+
 import lerobot.policies  # noqa: F401 - Import to register all policy configs
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
@@ -85,6 +86,7 @@ from lerobot.datasets.utils import build_dataset_frame, combine_feature_dicts
 from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.snvla.modeling_snvla import SNVLAPolicy
 from lerobot.policies.utils import make_robot_action
 from lerobot.processor import (
     PolicyAction,
@@ -105,7 +107,6 @@ from lerobot.robots import (  # noqa: F401
     so100_follower,
     so101_follower,
 )
-from lerobot.policies.snvla.modeling_snvla import SNVLAPolicy
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -385,7 +386,7 @@ def record_loop(
         postprocessor.reset()
 
     # 最初のフレームは自動で実況を挿入
-    if 1 < len(narration_manager._narrations):
+    if len(narration_manager._narrations) > 1:
         events["narration_occurred"] = True
 
     timestamp = 0
@@ -493,7 +494,15 @@ def record_loop(
         # Write to dataset
         if dataset is not None:
             action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
-            frame = {**observation_frame, **action_frame, "task": single_task}
+            frame = {
+                **observation_frame,
+                **action_frame,
+                "task": single_task,
+            }
+
+            if "real_timestamp" in dataset.features:
+                real_timestamp = start_loop_t - start_episode_t if timestamp else 0.0
+                frame["real_timestamp"] = np.array([real_timestamp], dtype=np.float32) 
 
             # Add narration data if narration manager is enabled
             if narration_manager.is_enabled():
@@ -575,6 +584,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             use_videos=cfg.dataset.video,
         ),
     )
+
+    if cfg.policy is not None:
+        dataset_features["real_timestamp"] = {"dtype": "float32", "shape": (1,), "names": None}
 
     # Add narration features if narrations are provided
     if cfg.dataset.narrations is not None and len(cfg.dataset.narrations) > 0:

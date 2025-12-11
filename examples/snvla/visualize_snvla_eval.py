@@ -1,13 +1,15 @@
 import argparse
+import bisect
 import contextlib
 import logging
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 from bokeh.layouts import column, layout, row
-from bokeh.models import Button, ColumnDataSource, Div, Slider, Span
+from bokeh.models import Button, CheckboxGroup, ColumnDataSource, Div, Slider, Span
 from bokeh.plotting import curdoc, figure
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -27,7 +29,7 @@ class VisualizerConfig:
     time_line_width: int = 1
     time_line_color: str = "red"
     play_button_width: int = 60
-    animation_interval_ms: int = 1000 // 30
+    animation_interval_ms: int = 33  # Approx 30 FPS
     timestamp_font_size: str = "14px"
     timestamp_height: int = 30
 
@@ -107,7 +109,7 @@ def load_data(dataset, episode_index):
         data["current_narration"].append(
             frame.get("current_narration", "").replace("\n", "<span style='color: #aaa;'>↵</span><br>")
         )
-        data["timestamp"].append(frame.get("timestamp", 0.0).item())
+        data["timestamp"].append(frame.get("real_timestamp", 0.0).item())
 
         data["previous_narrations"].append(prev_narrations)
         prev_narrations += data["current_narration"][-1]
@@ -292,6 +294,7 @@ def create_visualization(doc):
 
     # 5. Play/Export Controls
     play_button = Button(label="Play", width=CONFIG.play_button_width, button_type="success")
+    real_time_checkbox = CheckboxGroup(labels=["Real Speed"], active=[])
 
     # 6. Timestamp Display
     timestamp_div = Div(
@@ -331,11 +334,45 @@ def create_visualization(doc):
 
     slider.on_change("value", update)
 
+    slider.on_change("value", update)
+
+    # State for real-time playback
+    playback_state = {
+        "start_wall_time": 0.0,
+        "start_frame_time": 0.0,
+    }
+
     def animate_update():
-        frame = slider.value + 1
-        if frame >= num_frames:
-            frame = 0
-        slider.value = frame
+        nonlocal callback_id
+        current_idx = slider.value
+
+        # Check if "Real Speed" is active
+        is_real_speed = 0 in real_time_checkbox.active
+
+        if is_real_speed:
+            now = time.time()
+            elapsed = now - playback_state["start_wall_time"]
+            target_time = playback_state["start_frame_time"] + elapsed
+
+            # Find the frame index corresponding to target_time
+            # data["timestamp"] is expected to be sorted
+            next_idx = bisect.bisect_left(data["timestamp"], target_time)
+
+            # bisect returns insertion point, ensure we don't go out of bounds
+            if next_idx >= num_frames:
+                next_idx = 0
+                # Loop around: reset reference times
+                playback_state["start_wall_time"] = time.time()
+                playback_state["start_frame_time"] = data["timestamp"][0]
+
+            slider.value = next_idx
+
+        else:
+            # Standard frame-by-frame playback
+            frame = current_idx + 1
+            if frame >= num_frames:
+                frame = 0
+            slider.value = frame
 
     callback_id = None
 
@@ -343,17 +380,25 @@ def create_visualization(doc):
         nonlocal callback_id
         if play_button.label == "Play":
             play_button.label = "Pause"
+
+            # Initialize playback state for real-time mode
+            playback_state["start_wall_time"] = time.time()
+            # Handle potential None or missing timestamp gracefully, though we expect valid floats
+            current_ts = data["timestamp"][slider.value]
+            playback_state["start_frame_time"] = current_ts
+
             callback_id = doc.add_periodic_callback(animate_update, CONFIG.animation_interval_ms)
         else:
             play_button.label = "Play"
             if callback_id:
                 with contextlib.suppress(ValueError):
                     doc.remove_periodic_callback(callback_id)
+                callback_id = None
 
     play_button.on_click(toggle_play)
 
     # --- Layout ---
-    controls = row(play_button, slider)
+    controls = row(play_button, real_time_checkbox, slider)
 
     main_layout = layout(
         [
