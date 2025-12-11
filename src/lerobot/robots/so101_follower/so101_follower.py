@@ -61,7 +61,7 @@ class SO101Follower(Robot):
         self.cameras = make_cameras_from_configs(config.cameras)
 
         self.pid_gains = {
-            "default": (20, 0, 30),
+            "default": (16, 0, 32),
         }
 
     @property

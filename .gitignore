@@ -177,3 +177,6 @@ outputs/
 *.urdf
 *.xml
 *.part
+examples/snvla/record.sh
+.gitignore
+examples/snvla/run_policy.sh

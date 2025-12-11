@@ -501,7 +501,11 @@ def record_loop(
                 frame["current_narration"] = current_narration
 
             # Add SNVLA specific metrics if available
-            if isinstance(policy, SNVLAPolicy) and hasattr(policy, "latest_metrics") and policy.latest_metrics:
+            if (
+                isinstance(policy, SNVLAPolicy)
+                and hasattr(policy, "latest_metrics")
+                and policy.latest_metrics
+            ):
                 for key, value in policy.latest_metrics.items():
                     if key in dataset.features:
                         if key in ["prob_bon", "prob_boa"]:
@@ -510,18 +514,18 @@ def record_loop(
                             frame[key] = json.dumps(value)
                         else:
                             frame[key] = value
-            
+
             # Ensure keys exist in frame even if not in latest_metrics (e.g. no narration this step)
             if "narration_metrics" in dataset.features and "narration_metrics" not in frame:
-                    frame["narration_metrics"] = json.dumps([])
+                frame["narration_metrics"] = json.dumps([])
             if "prob_bon" in dataset.features and "prob_bon" not in frame:
-                    frame["prob_bon"] = np.array([0.0], dtype=np.float32)
+                frame["prob_bon"] = np.array([0.0], dtype=np.float32)
             if "prob_boa" in dataset.features and "prob_boa" not in frame:
-                    frame["prob_boa"] = np.array([0.0], dtype=np.float32)
+                frame["prob_boa"] = np.array([0.0], dtype=np.float32)
             if "current_narration" in dataset.features and "current_narration" not in frame:
-                    frame["current_narration"] = ""
+                frame["current_narration"] = ""
             if "previous_narrations" in dataset.features and "previous_narrations" not in frame:
-                    frame["previous_narrations"] = json.dumps([])
+                frame["previous_narrations"] = json.dumps([])
 
             dataset.add_frame(frame)
 
@@ -705,6 +709,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             # Skip reset for the last episode to be recorded
             if not events["stop_recording"]:
                 log_say("Reset the environment", cfg.play_sounds)
+                input("Press Enter to continue...")
                 record_loop(
                     robot=robot,
                     events=events,
@@ -746,7 +751,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     try:
         robot.disconnect()
         if teleop is not None:
-                teleop.disconnect()
+            teleop.disconnect()
     except Exception as e:
         logging.warning(f"Error disconnecting robot or teleop: {e}")
 
