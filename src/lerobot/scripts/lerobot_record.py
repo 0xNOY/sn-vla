@@ -385,7 +385,7 @@ def record_loop(
         postprocessor.reset()
 
     # 最初のフレームは自動で実況を挿入
-    if 1 < len(narration_manager._narrations):
+    if len(narration_manager._narrations) > 1:
         events["narration_occurred"] = True
 
     timestamp = 0
@@ -494,6 +494,7 @@ def record_loop(
         if dataset is not None:
             action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
             frame = {**observation_frame, **action_frame, "task": single_task}
+            frame["timestamp"] = start_loop_t - start_episode_t
 
             # Add narration data if narration manager is enabled
             if narration_manager.is_enabled():
@@ -510,7 +511,7 @@ def record_loop(
                             frame[key] = json.dumps(value)
                         else:
                             frame[key] = value
-            
+
             # Ensure keys exist in frame even if not in latest_metrics (e.g. no narration this step)
             if "narration_metrics" in dataset.features and "narration_metrics" not in frame:
                     frame["narration_metrics"] = json.dumps([])
