@@ -549,9 +549,9 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         except ImportError:
             raise ValueError(msg) from None
 
-        target_dtype = self._get_dtype(config.dtype)
-        if target_dtype is not None:
-            self.to(target_dtype)
+        self.target_dtype = self._get_dtype(config.dtype)
+        if self.target_dtype is not None:
+            self.to(self.target_dtype)
 
     def _get_dtype(self, dtype_str: str) -> torch.dtype | None:
         """Convert dtype string to torch dtype."""
@@ -561,6 +561,12 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             "float32": torch.float32,
         }
         return dtype_map.get(dtype_str)
+
+    def _cast_to_dtype(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Cast tensor to target dtype if needed."""
+        if self.target_dtype is not None and tensor.dtype != self.target_dtype:
+            return tensor.to(self.target_dtype)
+        return tensor
 
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
@@ -651,7 +657,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         bsize = pad_masks.shape[0]
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
 
-        return embs, pad_masks, att_masks
+        return self._cast_to_dtype(embs), pad_masks, att_masks
 
     def embed_suffix(self, noisy_actions, timestep):
         """Embed noisy_actions, timestep to prepare for Expert Gemma processing."""
@@ -698,7 +704,10 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
 
-        return embs, pad_masks, att_masks, adarms_cond
+        if adarms_cond is not None:
+            adarms_cond = self._cast_to_dtype(adarms_cond)
+
+        return self._cast_to_dtype(embs), pad_masks, att_masks, adarms_cond
 
     def forward(self, images, img_masks, tokens, masks, actions, noise=None, time=None) -> Tensor:
         """Do a full training forward pass and compute the loss."""
@@ -707,6 +716,10 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         if time is None:
             time = self.sample_time(actions.shape[0], actions.device)
+
+        actions = self._cast_to_dtype(actions)
+        noise = self._cast_to_dtype(noise)
+        time = self._cast_to_dtype(time)
 
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
@@ -781,6 +794,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 self.config.max_action_dim,
             )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
+            noise = self._cast_to_dtype(noise)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
@@ -877,7 +891,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.chunk_size :]
-        suffix_out = suffix_out.to(dtype=torch.float32)
+        suffix_out = self._cast_to_dtype(suffix_out)
+
         return self.action_out_proj(suffix_out)
 
 
