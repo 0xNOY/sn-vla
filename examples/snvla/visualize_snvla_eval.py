@@ -29,7 +29,7 @@ class VisualizerConfig:
     time_line_width: int = 1
     time_line_color: str = "red"
     play_button_width: int = 60
-    animation_interval_ms: int = 33  # Approx 30 FPS
+    animation_interval_ms: int = 1000 // 60
     timestamp_font_size: str = "14px"
     timestamp_height: int = 30
 
@@ -372,6 +372,13 @@ def create_visualization(doc):
             frame = current_idx + 1
             if frame >= num_frames:
                 frame = 0
+                playback_state["start_wall_time"] = time.time()
+                playback_state["start_frame_time"] = data["timestamp"][0]
+            else:
+                target_time = data["timestamp"][frame]
+                playback_state["start_wall_time"] = time.time() - (
+                    target_time - playback_state["start_frame_time"]
+                )
             slider.value = frame
 
     callback_id = None
