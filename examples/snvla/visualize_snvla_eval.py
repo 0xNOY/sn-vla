@@ -289,12 +289,13 @@ def create_visualization(doc):
         value=0,
         step=1,
         title="Time Step",
-        width=total_width - CONFIG.play_button_width,
+        width=total_width - CONFIG.play_button_width * 5,
     )
 
     # 5. Play/Export Controls
     play_button = Button(label="Play", width=CONFIG.play_button_width, button_type="success")
-    real_time_checkbox = CheckboxGroup(labels=["Real Speed"], active=[])
+    real_time_checkbox = CheckboxGroup(labels=["Real Speed"], active=[], width=CONFIG.play_button_width * 2)
+    save_imgs_button = Button(label="Save Images", width=CONFIG.play_button_width * 2, button_type="primary")
 
     # 6. Timestamp Display
     timestamp_div = Div(
@@ -402,10 +403,34 @@ def create_visualization(doc):
                     doc.remove_periodic_callback(callback_id)
                 callback_id = None
 
+    def save_images():
+        save_dir = Path.cwd() / f"snvla_episode_{episode_index}_images"
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        for key in camera_keys:
+            img_array = data["images"][key][slider.value]
+            h, w = img_array.shape
+
+            # Convert back to RGBA uint8
+            img_rgba = img_array.view(dtype=np.uint8).reshape((h, w, 4))
+            # Flip vertically back
+            img_rgba = np.flipud(img_rgba)
+
+            from PIL import Image
+
+            # img_rgba = np.array(
+            #     Image.fromarray(img_rgba, mode="RGBA").resize((512, 512), Image.Resampling.LANCZOS)
+            # )
+            img_pil = Image.fromarray(img_rgba, mode="RGBA")
+            img_pil.save(save_dir / f"{key}_frame_{slider.value:05d}.png")
+
+        logging.info(f"Saved images to {save_dir}")
+
     play_button.on_click(toggle_play)
+    save_imgs_button.on_click(save_images)
 
     # --- Layout ---
-    controls = row(play_button, real_time_checkbox, slider)
+    controls = row(play_button, real_time_checkbox, slider, save_imgs_button)
 
     main_layout = layout(
         [
