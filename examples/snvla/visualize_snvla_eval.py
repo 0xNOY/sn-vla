@@ -432,21 +432,17 @@ def create_visualization(doc):
     # --- Layout ---
     controls = row(play_button, real_time_checkbox, slider, save_imgs_button)
 
-    main_layout = layout(
-        [
-            row(
-                column(
-                    row(image_plots),
-                    bon_plot,
-                    timestamp_div,
-                    controls,
-                ),
-                column(
-                    instruction_div,
-                    narration_div,
-                ),
-            ),
-        ],
+    main_layout = row(
+        column(
+            row(image_plots),
+            bon_plot,
+            timestamp_div,
+            controls,
+        ),
+        column(
+            instruction_div,
+            narration_div,
+        ),
     )
 
     doc.add_root(main_layout)
