@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 from bokeh.layouts import column, row
-from bokeh.models import Button, CheckboxGroup, ColumnDataSource, Div, Range1d, Slider, Span
+from bokeh.models import Button, CheckboxGroup, ColumnDataSource, Div, Range1d, Slider, Span, Select
 from bokeh.plotting import curdoc, figure
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -72,72 +72,120 @@ def load_data(dataset, episode_index):
     from_idx = dataset.meta.episodes["dataset_from_index"][episode_index]
     to_idx = dataset.meta.episodes["dataset_to_index"][episode_index]
 
-    # Pre-load all data for the episode to avoid latency during interaction
-    # Note: For very large episodes, this might need optimization (lazy loading)
+    # Use hf_dataset for fast scalar access
+    # Slicing the dataset applies the transform (hf_transform_to_torch)
+    # and returns a dict of stacked tensors/lists
+    batch = dataset.hf_dataset[from_idx:to_idx]
+
     data = {
         "index": np.arange(to_idx - from_idx),
         "prob_bon": [],
         "prob_boa": [],
         "current_narration": [],
         "previous_narrations": [],
-        "images": {},  # key: list of rgba arrays
         "timestamp": [],
         "task_instruction": "",
     }
 
-    # Get task instruction from the first frame of the episode
-    first_frame = dataset[from_idx]
-    if "task" in first_frame:
-        data["task_instruction"] = first_frame["task"]
-    elif "language_instruction" in first_frame:
-        data["task_instruction"] = first_frame["language_instruction"]
+    # Helper to extract list from batch
+    def get_list(key, default_val=0.0):
+        if key in batch:
+            val = batch[key]
+            # If tensor, convert to list
+            if hasattr(val, "tolist"):
+                return val.tolist()
+            # If list of tensors
+            if isinstance(val, list) and len(val) > 0 and hasattr(val[0], "item"):
+                return [v.item() for v in val]
+            return val
+        return [default_val] * (to_idx - from_idx)
+
+    data["prob_bon"] = get_list("prob_bon")
+    data["prob_boa"] = get_list("prob_boa")
+    data["timestamp"] = get_list("real_timestamp", 0.0)
+    if all(t == 0.0 for t in data["timestamp"]):
+        data["timestamp"] = get_list("timestamp", 0.0)
+
+    # Narrations
+    raw_narrations = get_list("current_narration", "")
+
+    prev_narrations = []
+    current_accum = ""
+    formatted_current = []
+
+    for narr in raw_narrations:
+        if narr is None:
+            narr = ""
+        # Format for display
+        fmt = narr.replace("\n", "<span style='color: #aaa;'>↵</span><br>")
+
+        prev_narrations.append(current_accum)
+        formatted_current.append(fmt)
+        current_accum += fmt
+
+    data["current_narration"] = formatted_current
+    data["previous_narrations"] = prev_narrations
+
+    # Task instruction
+    if "task" in batch:
+        val = batch["task"]
+        data["task_instruction"] = val[0] if len(val) > 0 else "Execute the task."
+    elif "language_instruction" in batch:
+        val = batch["language_instruction"]
+        data["task_instruction"] = val[0] if len(val) > 0 else "Execute the task."
+    elif "task_index" in batch:
+        val = batch["task_index"]
+        task_idx = val[0] if len(val) > 0 else 0
+        if hasattr(task_idx, "item"):
+            task_idx = task_idx.item()
+
+        # Find task string from index
+        tasks_df = dataset.meta.tasks
+        # tasks_df has index=task_string, column="task_index"
+        try:
+            matched_tasks = tasks_df[tasks_df["task_index"] == task_idx].index
+            if len(matched_tasks) > 0:
+                data["task_instruction"] = matched_tasks[0]
+            else:
+                data["task_instruction"] = f"Unknown task index: {task_idx}"
+        except Exception:
+            data["task_instruction"] = "Execute the task."
     else:
-        # Fallback: check metadata if available
         data["task_instruction"] = "Execute the task."
 
+    # Handle tensor to string conversion if needed
+    if hasattr(data["task_instruction"], "item"):
+        data["task_instruction"] = data["task_instruction"].item()
+
     camera_keys = dataset.meta.camera_keys
+
+    return data, camera_keys, from_idx
+
+
+def process_frame(frame, camera_keys):
+    images = {}
     for key in camera_keys:
-        data["images"][key] = []
+        if key in frame:
+            # CHW float32 -> HWC uint8 RGBA for Bokeh
+            img_tensor = frame[key]
+            img_np = (img_tensor.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
 
-    prev_narrations = ""
-    for idx in range(from_idx, to_idx):
-        frame = dataset[idx]
+            # Add Alpha channel
+            h, w, c = img_np.shape
+            if c == 3:
+                alpha = np.full((h, w, 1), 255, dtype=np.uint8)
+                img_rgba = np.concatenate([img_np, alpha], axis=2)
+            else:
+                img_rgba = img_np
 
-        # Metrics
-        data["prob_bon"].append(frame.get("prob_bon", 0.0).item() if "prob_bon" in frame else 0.0)
-        data["prob_boa"].append(frame.get("prob_boa", 0.0).item() if "prob_boa" in frame else 0.0)
-        data["current_narration"].append(
-            frame.get("current_narration", "").replace("\n", "<span style='color: #aaa;'>↵</span><br>")
-        )
-        data["timestamp"].append(frame.get("real_timestamp", 0.0).item())
+            # Flip vertically because Bokeh origin is bottom-left
+            img_rgba = np.ascontiguousarray(np.flipud(img_rgba))
 
-        data["previous_narrations"].append(prev_narrations)
-        prev_narrations += data["current_narration"][-1]
-
-        # Images
-        for key in camera_keys:
-            if key in frame:
-                # CHW float32 -> HWC uint8 RGBA for Bokeh
-                img_tensor = frame[key]
-                img_np = (img_tensor.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-
-                # Add Alpha channel
-                h, w, c = img_np.shape
-                if c == 3:
-                    alpha = np.full((h, w, 1), 255, dtype=np.uint8)
-                    img_rgba = np.concatenate([img_np, alpha], axis=2)
-                else:
-                    img_rgba = img_np
-
-                # Flip vertically because Bokeh origin is bottom-left
-                img_rgba = np.ascontiguousarray(np.flipud(img_rgba))
-
-                # Convert to 32-bit integer array for Bokeh
-                # (M, N) array of RGBA values packed into 32-bit integers
-                view = img_rgba.view(dtype=np.uint32).reshape((h, w))
-                data["images"][key].append(view)
-
-    return data, camera_keys
+            # Convert to 32-bit integer array for Bokeh
+            # (M, N) array of RGBA values packed into 32-bit integers
+            view = img_rgba.view(dtype=np.uint32).reshape((h, w))
+            images[key] = view
+    return images
 
 
 def create_visualization(doc):
@@ -151,14 +199,14 @@ def create_visualization(doc):
     args, _ = parser.parse_known_args(sys.argv[1:])
 
     repo_id = args.repo_id
-    episode_index = args.episode_index
+    initial_episode_index = args.episode_index
     root = args.root
     if root == "None":
         root = None
     elif root is not None:
         root = Path(root)
 
-    logging.info(f"Loading dataset: {repo_id}, Episode: {episode_index}")
+    logging.info(f"Loading dataset: {repo_id}")
 
     try:
         dataset = LeRobotDataset(repo_id, root=root)
@@ -166,14 +214,38 @@ def create_visualization(doc):
         doc.add_root(Div(text=f"Error loading dataset: {e}"))
         return
 
-    data, camera_keys = load_data(dataset, episode_index)
-    num_frames = len(data["index"])
+    # State container
+    state = {
+        "data": None,
+        "from_idx": 0,
+        "episode_index": initial_episode_index,
+        "num_frames": 0,
+        "camera_keys": [],
+    }
+
+    # Initial load to get camera keys and setup plots
+    data, camera_keys, from_idx = load_data(dataset, initial_episode_index)
+    state.update(
+        {
+            "data": data,
+            "from_idx": from_idx,
+            "episode_index": initial_episode_index,
+            "num_frames": len(data["index"]),
+            "camera_keys": camera_keys,
+        }
+    )
+
+    num_frames = state["num_frames"]
 
     # --- Data Sources ---
     # Add image sources
+    # Load first frame to initialize dimensions
+    first_frame = dataset[from_idx]
+    first_images = process_frame(first_frame, camera_keys)
+
     image_sources = {}
     for key in camera_keys:
-        image_sources[key] = ColumnDataSource(data={"image": [data["images"][key][0]]})
+        image_sources[key] = ColumnDataSource(data={"image": [first_images[key]]})
 
     # Source for the full timeline (BON graph)
     timeline_source = ColumnDataSource(
@@ -192,6 +264,14 @@ def create_visualization(doc):
     )
 
     # --- Components ---
+
+    # 0. Episode Selector
+    episode_select = Select(
+        title="Episode:",
+        value=str(initial_episode_index),
+        options=[str(i) for i in range(dataset.num_episodes)],
+        width=200,
+    )
 
     # 1. Instruction Box (User)
     instruction_div = Div(
@@ -221,7 +301,7 @@ def create_visualization(doc):
     total_width = 0
     for key in camera_keys:
         # Get dimensions from the first frame
-        h, w = data["images"][key][0].shape
+        h, w = first_images[key].shape
         width = CONFIG.image_height * w // h
         total_width += width
         p = figure(
@@ -308,8 +388,11 @@ def create_visualization(doc):
     )
 
     # --- Callbacks ---
-    def update(attr, old, new):
+    def update_frame(attr, old, new):
         idx = int(new)
+        data = state["data"]
+        from_idx = state["from_idx"]
+        camera_keys = state["camera_keys"]
 
         # Update text
         prev = data["previous_narrations"][idx]
@@ -321,8 +404,10 @@ def create_visualization(doc):
         )
 
         # Update images
+        frame = dataset[from_idx + idx]
+        images = process_frame(frame, camera_keys)
         for key in camera_keys:
-            image_sources[key].data = {"image": [data["images"][key][idx]]}
+            image_sources[key].data = {"image": [images[key]]}
 
         # Update time line
         time_line.location = idx
@@ -333,9 +418,64 @@ def create_visualization(doc):
             time=data["timestamp"][idx],
         )
 
-    slider.on_change("value", update)
+    slider.on_change("value", update_frame)
 
-    slider.on_change("value", update)
+    def change_episode(attr, old, new):
+        ep_idx = int(new)
+        logging.info(f"Switching to Episode: {ep_idx}")
+
+        # Stop playback if running
+        if play_button.label == "Pause":
+            toggle_play()
+
+        # Load new data
+        new_data, _, new_from_idx = load_data(dataset, ep_idx)
+
+        # Update state
+        state.update(
+            {
+                "data": new_data,
+                "from_idx": new_from_idx,
+                "episode_index": ep_idx,
+                "num_frames": len(new_data["index"]),
+            }
+        )
+
+        num_frames = state["num_frames"]
+        data = state["data"]
+
+        # Update sources
+        timeline_source.data = {
+            "index": data["index"],
+            "prob_bon": data["prob_bon"],
+            "prob_boa": data["prob_boa"],
+        }
+
+        bon_gt_boa_indices = [
+            i
+            for i, (bon, boa) in enumerate(zip(data["prob_bon"], data["prob_boa"], strict=True))
+            if bon > boa
+        ]
+        bon_gt_boa_source.data = {
+            "index": bon_gt_boa_indices,
+            "prob_bon": [data["prob_bon"][i] for i in bon_gt_boa_indices],
+        }
+
+        # Update UI components
+        instruction_div.text = INSTRUCTION_DIV_TEMPLATE.format(
+            font_size=CONFIG.narration_font_size,
+            task_instruction=data["task_instruction"],
+        )
+
+        # Reset slider and ranges
+        slider.end = num_frames - 1
+        slider.value = 0
+        bon_plot.x_range.end = num_frames
+
+        # Trigger frame update for frame 0
+        update_frame(None, None, 0)
+
+    episode_select.on_change("value", change_episode)
 
     # State for real-time playback
     playback_state = {
@@ -346,6 +486,8 @@ def create_visualization(doc):
     def animate_update():
         nonlocal callback_id
         current_idx = slider.value
+        data = state["data"]
+        num_frames = state["num_frames"]
 
         # Check if "Real Speed" is active
         is_real_speed = 0 in real_time_checkbox.active
@@ -386,6 +528,7 @@ def create_visualization(doc):
 
     def toggle_play():
         nonlocal callback_id
+        data = state["data"]
         if play_button.label == "Play":
             play_button.label = "Pause"
 
@@ -404,11 +547,18 @@ def create_visualization(doc):
                 callback_id = None
 
     def save_images():
+        episode_index = state["episode_index"]
+        from_idx = state["from_idx"]
+        camera_keys = state["camera_keys"]
+
         save_dir = Path.cwd() / f"snvla_episode_{episode_index}_images"
         save_dir.mkdir(parents=True, exist_ok=True)
 
+        frame = dataset[from_idx + slider.value]
+        images = process_frame(frame, camera_keys)
+
         for key in camera_keys:
-            img_array = data["images"][key][slider.value]
+            img_array = images[key]
             h, w = img_array.shape
 
             # Convert back to RGBA uint8
@@ -434,6 +584,7 @@ def create_visualization(doc):
 
     main_layout = row(
         column(
+            episode_select,
             row(image_plots),
             bon_plot,
             timestamp_div,
