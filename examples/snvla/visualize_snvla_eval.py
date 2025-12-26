@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from bokeh.layouts import column, layout, row
-from bokeh.models import Button, CheckboxGroup, ColumnDataSource, Div, Slider, Span
+from bokeh.layouts import column, row
+from bokeh.models import Button, CheckboxGroup, ColumnDataSource, Div, Range1d, Slider, Span
 from bokeh.plotting import curdoc, figure
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -226,8 +226,8 @@ def create_visualization(doc):
         total_width += width
         p = figure(
             title=f"Camera: {key}",
-            x_range=(0, w),
-            y_range=(0, h),
+            x_range=Range1d(0, w),
+            y_range=Range1d(0, h),
             width=width,
             height=CONFIG.image_height,
             tools="",
@@ -244,7 +244,7 @@ def create_visualization(doc):
         y_axis_label="Probability",
         width=total_width,
         height=CONFIG.bon_plot_height,
-        x_range=(0, num_frames),
+        x_range=Range1d(0, num_frames),
     )
     bon_plot.line(
         "index",
